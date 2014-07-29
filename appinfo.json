@@ -4,7 +4,7 @@
         ""
     ],
     "companyName": "ultrarunner@sbcglobal.net",
-    "longName": "Watch with chronometer",
+    "longName": "Watch with chronometer and 30 split memory.",
     "projectType": "native",
     "resources": {
         "media": [
@@ -14,7 +14,7 @@
                 "type": "png"
             },
             {
-                "characterRegex": "[|0-9:. RESETHOLD]",
+                "characterRegex": "[a-zA-Z|0-9:. ]",
                 "file": "fonts/UniversCondensedMedium.ttf",
                 "name": "FONT_UNIVERS_COND_MED_36",
                 "type": "font"
@@ -32,10 +32,10 @@
             }
         ]
     },
-    "shortName": "WatchChronometer",
+    "shortName": "WatchChrono",
     "uuid": "5aa7341a-1547-49b3-8c28-a7dc55ea356b",
     "versionCode": 1,
-    "versionLabel": "1.0",
+    "versionLabel": "2.0",
     "watchapp": {
         "watchface": false
     }
