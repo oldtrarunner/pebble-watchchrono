@@ -1,7 +1,8 @@
 // WatchChronometer (c) 2014 Keith Blom - All rights reserved
-// V2 - Add splits.
+// v2.1 - Add option selection.
+// v2.0 - Add splits.
 
-#define APP_VERSION "Ver 2.0.0"
+#define APP_VERSION "Ver 2.1.0"
 
 // Standard includes
 #include "pebble.h"
@@ -10,25 +11,19 @@
 void format_splits_content();
 void setup_splits_window();
 void select_splits_display_content();
-//void setup_time_chrono_window();
-//static void splits_click_config_provider(Window *window);
 
 // Menu window is pushed to the stack first, then the time window below it.
 // Splits window is pushed when selected from menu.
+static Window *option_window; 
 static Window *menu_window; 
 static Window *split_window; 
 static Window *time_window; 
 
 // Menu window layers and associated data.
-#define NBR_MENU_ITEMS 4
+#define NBR_MENU_ITEMS 6
 static SimpleMenuLayer *menuLayer;
 static SimpleMenuItem menuItems[NBR_MENU_ITEMS];
 static SimpleMenuSection menuSection[1];
-
-// Splits window layers.
-static TextLayer *splitTitleLayer;
-static TextLayer *splitSepLayer;
-static TextLayer *splitContentLayer;
 
 // Time/chronometer window layers.
 static BitmapLayer *lightLayer;
@@ -37,6 +32,15 @@ static TextLayer *timeChronoLayer;
 static BitmapLayer *ssLayer;
 static TextLayer *dateInfoLayer;
 static TextLayer *sptRstButtonLayer;
+
+// Splits window layers.
+static TextLayer *splitTitleLayer;
+static TextLayer *splitContentLayer;
+
+// Option window layers.
+static TextLayer *optionUpLabelLayer;
+static TextLayer *optionContentLayer;
+static TextLayer *optionDownLabelLayer;
 
 // Display mode select
 #define MODE_CLOCK 0
@@ -49,12 +53,6 @@ static short selectedMode = MODE_CLOCK;
 #define RUN_STOP 1
 #define RUN_MAX 2
 static short chronoRunSelect = RUN_STOP;
-
-// Splits button behavior.
-// Make this a user selectable option some day.
-#define SPLITS_KEEP_OLDEST 0
-#define SPLITS_KEEP_LATEST 1
-static int splitButtonBehavior = SPLITS_KEEP_OLDEST;
 
 // Font for time and chronmeter.
 GFont time_font;
@@ -79,11 +77,11 @@ static time_t savedChronoElapsed = 0;
 static bool resetInProgress = false;
 static AppTimer *resetTimerHandle = NULL;
 
-// Access once and remember.
+// 12/24 hour clock. Access once and remember.
 static bool clock_is_24h = false;
 
 // "true" if the chronometer has been reset after being stopped.
-// (i.e. do not need to display RESET text on a stopped chronometer)
+// (i.e. do not need to display RESET text on a stopped and reset chronometer)
 static bool chronoHasBeenReset = true;
 
 // Split/reset button text.
@@ -92,7 +90,7 @@ static char BLANK_TEXT[] = "";
 static char RESET_TEXT[] = "Reset";
 static char SPLIT_TEXT[] = "Split";     // Will be appended with next available split number.
 static char SPLIT_TEXT_FULL[] = "Split Full";
-static char spt_rstButtonText[SPLIT_TEXT_MAX_LEN] = ""; // Space for "Split Full"
+static char spt_rstButtonText[SPLIT_TEXT_MAX_LEN] = ""; // Space for "Split Full" w/ null terminator
 
 // Key to access persistent data.
 static const uint32_t  persistent_data_key = 1;
@@ -109,6 +107,21 @@ static char splitsDisplayContent[MAX_DISPLAY_SPLITS * CHARS_PER_SPLIT + 1]; // E
 static char SPLITS_DISPLAY_NONE[] = "    None    "; // Must be CHARS_PER_SPLIT including NULL.
 static int splitDisplayIndex = 0;
 
+// Support for option window.
+#define OPTION_CHOICE_YES "Yes"
+#define OPTION_CHOICE_NO "No"
+#define OPTION_CHOICE_MAX_LEN 4
+#define OPTION_TEXT_MAX_LEN 256
+static char optionText[OPTION_TEXT_MAX_LEN]; // Made global as a convenience, not required.
+
+// Support for Reset behavior option.
+static char resetOptionText[] = "Chronometer Reset button also clears splits:";
+static char resetButtonClearsSplits[OPTION_CHOICE_MAX_LEN] = OPTION_CHOICE_YES;
+
+// Support for Split behavior option.
+static char splitsOptionText[] = "When splits memory is Full, replace oldest with new:";
+static char splitsFullReplaceOldest[OPTION_CHOICE_MAX_LEN] = OPTION_CHOICE_NO;
+
 // Structure to save state when app is not running.
 typedef struct saved_state_S
 {
@@ -123,7 +136,98 @@ typedef struct saved_state_S
   time_t split_1;
   time_t splits[MAX_SPLIT_INDEX + 1];
   int splitIndex;
+  char resetButtonClearsSplits[OPTION_CHOICE_MAX_LEN];
+  char splitsFullReplaceOldest[OPTION_CHOICE_MAX_LEN];
 } __attribute__((__packed__)) saved_state_S;
+
+
+
+
+//##################### Option window support ################################
+
+// ### Splits option support ###
+
+// Splits option UP button - save latest.
+static void splits_option_up_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
+
+  // Save choice for Split button use.
+  strncpy(splitsFullReplaceOldest, OPTION_CHOICE_YES, sizeof(splitsFullReplaceOldest));
+
+  // Update option window to reflect choice.
+  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", splitsOptionText, splitsFullReplaceOldest);
+  text_layer_set_text(optionContentLayer, optionText);
+
+  // If split/reset button currently indicates Full, change to last split slot number.
+  if (strcmp(spt_rstButtonText, SPLIT_TEXT_FULL) == 0)
+  {
+    snprintf(spt_rstButtonText, sizeof(spt_rstButtonText), "%s %i", SPLIT_TEXT, MAX_SPLIT_INDEX + 1);
+    text_layer_set_text(sptRstButtonLayer, spt_rstButtonText);
+  }
+}
+
+
+// Splits option DOWN button - save oldest.
+static void splits_option_down_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
+
+  // Save choice for Split button use.
+  strncpy(splitsFullReplaceOldest, OPTION_CHOICE_NO, sizeof(splitsFullReplaceOldest));
+
+  // Update option window to reflect choice.
+  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", splitsOptionText, splitsFullReplaceOldest);
+  text_layer_set_text(optionContentLayer, optionText);
+
+  // If split/reset button currently indicates last split slot number, change to indicate Full.
+  char testStr[SPLIT_TEXT_MAX_LEN];
+  snprintf(testStr, SPLIT_TEXT_MAX_LEN, "%s %i", SPLIT_TEXT, MAX_SPLIT_INDEX + 1);
+  if (strcmp(spt_rstButtonText, testStr) == 0)
+  {
+    snprintf(spt_rstButtonText, sizeof(spt_rstButtonText), "%s", SPLIT_TEXT_FULL);
+    text_layer_set_text(sptRstButtonLayer, spt_rstButtonText);
+  }
+}
+
+
+// Splits option click configuration.
+static void splits_option_click_config_provider(Window *window) {
+
+  window_single_click_subscribe(BUTTON_ID_UP, (ClickHandler) splits_option_up_single_click_handler);
+
+  window_single_click_subscribe(BUTTON_ID_DOWN, (ClickHandler) splits_option_down_single_click_handler);
+}
+
+// ### Reset option support ###
+
+// Reset option UP button.
+static void reset_option_up_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
+
+  // Save choice for Reset button use.
+  strncpy(resetButtonClearsSplits, OPTION_CHOICE_YES, sizeof(resetButtonClearsSplits));
+
+  // Update option window to reflect choice.
+  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", resetOptionText, resetButtonClearsSplits);
+  text_layer_set_text(optionContentLayer, optionText);
+}
+
+
+// Reset option DOWN button.
+static void reset_option_down_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
+
+  // Save choice for Reset button use.
+  strncpy(resetButtonClearsSplits, OPTION_CHOICE_NO, sizeof(resetButtonClearsSplits));
+
+  // Update option window to reflect choice.
+  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", resetOptionText, resetButtonClearsSplits);
+  text_layer_set_text(optionContentLayer, optionText);
+}
+
+
+// Reset option click configuration.
+static void reset_option_click_config_provider(Window *window) {
+
+  window_single_click_subscribe(BUTTON_ID_UP, (ClickHandler) reset_option_up_single_click_handler);
+
+  window_single_click_subscribe(BUTTON_ID_DOWN, (ClickHandler) reset_option_down_single_click_handler);
+}
 
 //##################### Menu window support ################################
 
@@ -156,13 +260,33 @@ static void menuClearSplitsHandler(int index, void *context)
 
   // If the chronometer is running and was the last thing displayed before
   // navigation to Clear splits, need to label Splits button for split 1.
-  if (chronoRunSelect == RUN_START)
+  if (selectedMode == MODE_CHRON && chronoRunSelect == RUN_START)
   {
     snprintf(spt_rstButtonText, sizeof(spt_rstButtonText), "%s %i", SPLIT_TEXT, splitIndex + 2);
   }
 
   text_layer_set_text(splitContentLayer, splitsDisplayContent);
   window_stack_push(split_window, true /* Animated */);
+}
+
+
+static void menuSplitsOptionHandler(int index, void *context)
+{
+  window_set_click_config_provider(option_window, (ClickConfigProvider) splits_option_click_config_provider);
+
+  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", splitsOptionText, splitsFullReplaceOldest);
+  text_layer_set_text(optionContentLayer, optionText);
+  window_stack_push(option_window, true /* Animated */);
+}
+
+
+static void menuResetOptionHandler(int index, void *context)
+{
+  window_set_click_config_provider(option_window, (ClickConfigProvider) reset_option_click_config_provider);
+
+  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", resetOptionText, resetButtonClearsSplits);
+  text_layer_set_text(optionContentLayer, optionText);
+  window_stack_push(option_window, true /* Animated */);
 }
 
 //##################### Split window support ################################
@@ -351,7 +475,8 @@ static void tc_up_long_click_handler(ClickRecognizerRef recognizer, Window *wind
       else
       {
         // Mark full when keeping oldest splits.
-        if (splitButtonBehavior == SPLITS_KEEP_OLDEST)
+        //if (splitButtonBehavior == SPLITS_KEEP_OLDEST)
+        if (strcmp(splitsFullReplaceOldest, OPTION_CHOICE_NO) == 0)
         {
           snprintf(spt_rstButtonText, sizeof(spt_rstButtonText), "%s", SPLIT_TEXT_FULL);
         }
@@ -408,7 +533,8 @@ static void tc_select_single_click_handler(ClickRecognizerRef recognizer, Window
       else
       {
         // Mark full when keeping oldest splits.
-        if (splitButtonBehavior == SPLITS_KEEP_OLDEST)
+        //if (splitButtonBehavior == SPLITS_KEEP_OLDEST)
+        if (strcmp(splitsFullReplaceOldest, OPTION_CHOICE_NO) == 0)
         {
           snprintf(spt_rstButtonText, sizeof(spt_rstButtonText), "%s", SPLIT_TEXT_FULL);
         }
@@ -444,8 +570,11 @@ static void tc_reset_timeout_handler(void *callback_data) {
 
   resetInProgress = false;
 
-  // Reset splits buffer.
-  splitIndex = SPLIT_INDEX_RESET;
+  // Reset splits buffer if the option is active.
+  if (strcmp(resetButtonClearsSplits, OPTION_CHOICE_YES) == 0)
+  {
+    splitIndex = SPLIT_INDEX_RESET;
+  }
 }
 
 
@@ -460,7 +589,8 @@ static void tc_down_single_click_handler(ClickRecognizerRef recognizer, Window *
     if (splitIndex == MAX_SPLIT_INDEX)
     {
       // If saving latest, throw away oldest to make room for new.
-      if (splitButtonBehavior == SPLITS_KEEP_LATEST)
+      //if (splitButtonBehavior == SPLITS_KEEP_LATEST)
+      if (strcmp(splitsFullReplaceOldest, OPTION_CHOICE_YES) == 0)
       {
         for (int i = 1; i <= MAX_SPLIT_INDEX; i++)
         {
@@ -481,8 +611,9 @@ static void tc_down_single_click_handler(ClickRecognizerRef recognizer, Window *
       // If split buffer is now full, determine how to update splits button label.
       if (splitIndex == MAX_SPLIT_INDEX)
       {
-        // If we're saving the oldest, set label to indicate splits buffer is full.
-        if (splitButtonBehavior == SPLITS_KEEP_OLDEST)
+        // If we're saving the oldest, set label to indicate splits buffer is now full.
+        //if (splitButtonBehavior == SPLITS_KEEP_OLDEST)
+        if (strcmp(splitsFullReplaceOldest, OPTION_CHOICE_NO) == 0)
         {
           snprintf(spt_rstButtonText, sizeof(spt_rstButtonText), "%s", SPLIT_TEXT_FULL);
         }
@@ -534,11 +665,11 @@ static void tc_down_up_handler(ClickRecognizerRef recognizer, Window *window) {
     // Reset timeout fired, meaning we proceed with the reset.
     if (resetInProgress == false)
     {
-      chronoElapsed = 0;
-      text_layer_set_text(timeChronoLayer, " 0:00:00");
+      //chronoElapsed = 0;
+      //text_layer_set_text(timeChronoLayer, " 0:00:00");
 
-      strncpy(spt_rstButtonText, BLANK_TEXT, sizeof(spt_rstButtonText));
-      text_layer_set_text(sptRstButtonLayer, spt_rstButtonText);
+      //strncpy(spt_rstButtonText, BLANK_TEXT, sizeof(spt_rstButtonText));
+      //text_layer_set_text(sptRstButtonLayer, spt_rstButtonText);
 
       chronoHasBeenReset = true;
     }
@@ -610,6 +741,8 @@ static void app_init() {
         splits[i] = saved_state.splits[i];
       }
       splitIndex = saved_state.splitIndex;
+      strncpy(resetButtonClearsSplits, saved_state.resetButtonClearsSplits, sizeof(resetButtonClearsSplits));
+      strncpy(splitsFullReplaceOldest, saved_state.splitsFullReplaceOldest, sizeof(splitsFullReplaceOldest));
     }
     else
     {
@@ -650,7 +783,15 @@ static void app_init() {
                                   .subtitle = NULL,
                                   .callback = menuClearSplitsHandler,
                                   .icon = NULL};
-  menuItems[3] = (SimpleMenuItem){.title = APP_VERSION,
+  menuItems[3] = (SimpleMenuItem){.title = "Splits Option",
+                                  .subtitle = NULL,
+                                  .callback = menuSplitsOptionHandler,
+                                  .icon = NULL};
+  menuItems[4] = (SimpleMenuItem){.title = "Reset Option",
+                                  .subtitle = NULL,
+                                  .callback = menuResetOptionHandler,
+                                  .icon = NULL};
+  menuItems[5] = (SimpleMenuItem){.title = APP_VERSION,
                                   .subtitle = NULL,
                                   .callback = NULL,
                                   .icon = NULL};
@@ -752,6 +893,7 @@ static void app_init() {
   text_layer_set_text(splitTitleLayer, "Splits");
   layer_add_child(split_window_layer, text_layer_get_layer(splitTitleLayer));
 
+  // Splits content
   splitContentLayer = text_layer_create(GRect(0, 32, 144, 136));
   text_layer_set_text_alignment(splitContentLayer, GTextAlignmentCenter);
   text_layer_set_font(splitContentLayer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
@@ -761,6 +903,43 @@ static void app_init() {
   layer_add_child(split_window_layer, text_layer_get_layer(splitContentLayer));
 
   window_set_click_config_provider(split_window, (ClickConfigProvider) splits_click_config_provider);
+
+  // ### Option window setup ###
+
+  // Create option window.
+  option_window = window_create();
+  Layer * option_window_layer = window_get_root_layer(option_window);
+  window_set_fullscreen(option_window, true);
+  window_set_background_color(option_window, GColorBlack);
+
+  // Up button label - "Yes"
+  optionUpLabelLayer = text_layer_create(GRect(0, 0, 144, 28));
+  text_layer_set_text_alignment(optionUpLabelLayer, GTextAlignmentRight);
+  text_layer_set_font(optionUpLabelLayer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
+  text_layer_set_background_color(optionUpLabelLayer, GColorBlack);
+  text_layer_set_text_color(optionUpLabelLayer, GColorWhite);
+  text_layer_set_text(optionUpLabelLayer, OPTION_CHOICE_YES);
+  layer_add_child(option_window_layer, text_layer_get_layer(optionUpLabelLayer));
+
+  // Option content
+  optionContentLayer = text_layer_create(GRect(0, 32, 144, 136));
+  text_layer_set_text_alignment(optionContentLayer, GTextAlignmentCenter);
+  text_layer_set_font(optionContentLayer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
+  text_layer_set_background_color(optionContentLayer, GColorBlack);
+  text_layer_set_text_color(optionContentLayer, GColorWhite);
+  text_layer_set_text(optionContentLayer, "test");
+  layer_add_child(option_window_layer, text_layer_get_layer(optionContentLayer));
+
+  // Down button label - "No"
+  optionDownLabelLayer = text_layer_create(GRect(0, 141, 144, 26));
+  text_layer_set_text_alignment(optionDownLabelLayer, GTextAlignmentRight);
+  text_layer_set_font(optionDownLabelLayer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
+  text_layer_set_background_color(optionDownLabelLayer, GColorBlack);
+  text_layer_set_text_color(optionDownLabelLayer, GColorWhite);
+  text_layer_set_text(optionDownLabelLayer, OPTION_CHOICE_NO);
+  layer_add_child(option_window_layer, text_layer_get_layer(optionDownLabelLayer));
+
+  // Note: window_set_click_config_provider() for option window will be set based on option selected.
 
   // ### Show menu window with time/chronometer immediately stacked on top it if. ###
   window_stack_push(menu_window, true /* Animated */);
@@ -785,6 +964,8 @@ static void app_deinit() {
     saved_state.splits[i] = splits[i];
   }
   saved_state.splitIndex = splitIndex;
+  strncpy(saved_state.resetButtonClearsSplits, resetButtonClearsSplits, sizeof(saved_state.resetButtonClearsSplits));
+  strncpy(saved_state.splitsFullReplaceOldest, splitsFullReplaceOldest, sizeof(saved_state.splitsFullReplaceOldest));
 
   int bytes_written = 0;
   if (sizeof(saved_state_S) != (bytes_written = persist_write_data(persistent_data_key,
@@ -814,9 +995,14 @@ static void app_deinit() {
   // Stop keeping track of time/chrono elapsed.
   tick_timer_service_unsubscribe();
 
+  // Destroy option window.
+  text_layer_destroy(optionContentLayer);
+  text_layer_destroy(optionUpLabelLayer);
+  text_layer_destroy(optionDownLabelLayer);
+  window_destroy(option_window);
+
   // Destroy splits window.
   text_layer_destroy(splitContentLayer);
-  text_layer_destroy(splitSepLayer);
   text_layer_destroy(splitTitleLayer);
   window_destroy(split_window);
 
