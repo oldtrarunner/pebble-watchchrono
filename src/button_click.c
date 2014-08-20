@@ -1,8 +1,10 @@
 // WatchChronometer (c) 2014 Keith Blom - All rights reserved
+// v2.2 - Rework time/chrono fonts/format for larger display. Add color inversion option.
+// v2.1.1 - Arrows on splits display.
 // v2.1 - Add option selection.
 // v2.0 - Add splits.
 
-#define APP_VERSION "Ver 2.1.0"
+#define APP_VERSION "Ver 2.2.0"
 
 // Standard includes
 #include "pebble.h"
@@ -13,14 +15,13 @@ void setup_splits_window();
 void select_splits_display_content();
 
 // Menu window is pushed to the stack first, then the time window below it.
-// Splits window is pushed when selected from menu.
 static Window *option_window; 
 static Window *menu_window; 
 static Window *split_window; 
 static Window *time_window; 
 
 // Menu window layers and associated data.
-#define NBR_MENU_ITEMS 6
+#define NBR_MENU_ITEMS 7
 static SimpleMenuLayer *menuLayer;
 static SimpleMenuItem menuItems[NBR_MENU_ITEMS];
 static SimpleMenuSection menuSection[1];
@@ -28,14 +29,18 @@ static SimpleMenuSection menuSection[1];
 // Time/chronometer window layers.
 static BitmapLayer *lightLayer;
 static TextLayer *modeButtonLayer;
-static TextLayer *timeChronoLayer;
+static TextLayer *timeChronoHhmmLayer;
+static TextLayer *timeChronoSecLayer;
 static BitmapLayer *ssLayer;
 static TextLayer *dateInfoLayer;
 static TextLayer *sptRstButtonLayer;
+static InverterLayer *tcInverterLayer = 0;
 
 // Splits window layers.
 static TextLayer *splitTitleLayer;
+static BitmapLayer *splitUpIconLayer;
 static TextLayer *splitContentLayer;
+static BitmapLayer *splitDnIconLayer;
 
 // Option window layers.
 static TextLayer *optionUpLabelLayer;
@@ -54,25 +59,30 @@ static short selectedMode = MODE_CLOCK;
 #define RUN_MAX 2
 static short chronoRunSelect = RUN_STOP;
 
-// Font for time and chronmeter.
-GFont time_font;
+// Fonts for time and chronometer.
+GFont hhmm_font;
+GFont sec_font;
 
 // Graphics
 GBitmap* menuIcon;
 GBitmap *light_image;
 GBitmap *ss_image;
+GBitmap *up_image;
+GBitmap *dn_image;
 
 // Time chronometer was started, or zero if reset.
 static time_t chronoElapsed = 0;
 
 // Time or chronograph value as text string.
+#define MAX_TIME_TEXT_LEN 9
 static char timeText[] = "00:00:00";
 
 // Month day or "CHRONO".
 static char dateStr[] = "Jan 31"; 
 
 // Saved chrono time during wait for reset.
-static char savedChronoText[] = "00:00:00"; 
+static char savedChronoHhmm[] = "00:00"; 
+static char savedChronoSec[] = "00"; 
 static time_t savedChronoElapsed = 0;
 static bool resetInProgress = false;
 static AppTimer *resetTimerHandle = NULL;
@@ -114,6 +124,11 @@ static int splitDisplayIndex = 0;
 #define OPTION_TEXT_MAX_LEN 256
 static char optionText[OPTION_TEXT_MAX_LEN]; // Made global as a convenience, not required.
 
+// Support for Clear Splits.
+static char clearSplitsText[] = "Select 'Yes' to clear splits.";
+static char splitsClearedText[] = "Splits have been cleared.";
+static char noSplitsText[] = "There are no splits.";
+
 // Support for Reset behavior option.
 static char resetOptionText[] = "Chronometer Reset button also clears splits:";
 static char resetButtonClearsSplits[OPTION_CHOICE_MAX_LEN] = OPTION_CHOICE_YES;
@@ -122,18 +137,23 @@ static char resetButtonClearsSplits[OPTION_CHOICE_MAX_LEN] = OPTION_CHOICE_YES;
 static char splitsOptionText[] = "When splits memory is Full, replace oldest with new:";
 static char splitsFullReplaceOldest[OPTION_CHOICE_MAX_LEN] = OPTION_CHOICE_NO;
 
+// Support for Color option.
+static char colorOptionText[] = "Display time and chrono with white text on black background:";
+static char colorOptionChoice[OPTION_CHOICE_MAX_LEN] = OPTION_CHOICE_NO;
+
 // Structure to save state when app is not running.
 typedef struct saved_state_S
 {
   short selectedMode;
-  char timeText [9];
+  char timeText [MAX_TIME_TEXT_LEN];
   char dateStr [7];
   short chronoRunSelect;
   time_t chronoElapsed;
   time_t closeTm;
   char spt_rstButtonText[SPLIT_TEXT_MAX_LEN];
   bool chronoHasBeenReset;
-  time_t split_1;
+  //time_t unused;
+  char colorOptionChoice[OPTION_CHOICE_MAX_LEN];
   time_t splits[MAX_SPLIT_INDEX + 1];
   int splitIndex;
   char resetButtonClearsSplits[OPTION_CHOICE_MAX_LEN];
@@ -144,6 +164,39 @@ typedef struct saved_state_S
 
 
 //##################### Option window support ################################
+
+// ### Clear splits support ###
+
+// Clear splits UP button - do it!
+static void clear_splits_up_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
+
+  strcpy(formattedSplits, SPLITS_DISPLAY_NONE);
+
+  // Clear splits.
+  splitIndex = -1;
+  splitDisplayIndex = 0;
+  select_splits_display_content();
+
+  // If the chronometer is running and was the last thing displayed before
+  // navigation to Clear splits, need to label Splits button for split 1.
+  if (selectedMode == MODE_CHRON && chronoRunSelect == RUN_START)
+  {
+    snprintf(spt_rstButtonText, sizeof(spt_rstButtonText), "%s %i", SPLIT_TEXT, splitIndex + 2);
+  }
+
+  layer_set_hidden(bitmap_layer_get_layer(splitUpIconLayer), true);
+  layer_set_hidden(bitmap_layer_get_layer(splitDnIconLayer), true);
+
+  // Update option window to reflect action.
+  text_layer_set_text(optionContentLayer, splitsClearedText);
+}
+
+
+// Clear splits click configuration.
+static void clear_splits_click_config_provider(Window *window) {
+
+  window_single_click_subscribe(BUTTON_ID_UP, (ClickHandler) clear_splits_up_single_click_handler);
+}
 
 // ### Splits option support ###
 
@@ -229,7 +282,54 @@ static void reset_option_click_config_provider(Window *window) {
   window_single_click_subscribe(BUTTON_ID_DOWN, (ClickHandler) reset_option_down_single_click_handler);
 }
 
+// ### Color option support ###
+
+// Color option UP button.
+static void Color_option_up_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
+
+  // Save choice.
+  strncpy(colorOptionChoice, OPTION_CHOICE_YES, sizeof(colorOptionChoice));
+
+  // Update option window to reflect choice.
+  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", colorOptionText, colorOptionChoice);
+  text_layer_set_text(optionContentLayer, optionText);
+
+  // Change the time/chrono window to reflect the choice.
+  layer_set_hidden(inverter_layer_get_layer(tcInverterLayer), false);
+}
+
+
+// Color option DOWN button.
+static void Color_option_down_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
+
+  // Save choice.
+  strncpy(colorOptionChoice, OPTION_CHOICE_NO, sizeof(colorOptionChoice));
+
+  // Update option window to reflect choice.
+  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", colorOptionText, colorOptionChoice);
+  text_layer_set_text(optionContentLayer, optionText);
+
+  // Change the time/chrono window to reflect the choice.
+  layer_set_hidden(inverter_layer_get_layer(tcInverterLayer), true);
+}
+
+
+// Color option click configuration.
+static void Color_option_click_config_provider(Window *window) {
+
+  window_single_click_subscribe(BUTTON_ID_UP, (ClickHandler) Color_option_up_single_click_handler);
+
+  window_single_click_subscribe(BUTTON_ID_DOWN, (ClickHandler) Color_option_down_single_click_handler);
+}
+
 //##################### Menu window support ################################
+
+void menuAppearHandler(struct Window *window) {
+
+  layer_set_hidden(text_layer_get_layer(optionUpLabelLayer), false);
+  layer_set_hidden(text_layer_get_layer(optionDownLabelLayer), false);
+}
+
 
 static void menuWatchChronoHandler(int index, void *context)
 {
@@ -244,6 +344,17 @@ static void menuDisplaySplitsHandler(int index, void *context)
   splitDisplayIndex = 0;
   select_splits_display_content();
 
+  layer_set_hidden(bitmap_layer_get_layer(splitUpIconLayer), true);
+
+  if (splitIndex >= MAX_DISPLAY_SPLITS)
+  {
+    layer_set_hidden(bitmap_layer_get_layer(splitDnIconLayer), false);
+  }
+  else
+  {
+    layer_set_hidden(bitmap_layer_get_layer(splitDnIconLayer), true);
+  }
+
   text_layer_set_text(splitContentLayer, splitsDisplayContent);
   window_stack_push(split_window, true /* Animated */);
 }
@@ -251,22 +362,21 @@ static void menuDisplaySplitsHandler(int index, void *context)
 
 static void menuClearSplitsHandler(int index, void *context)
 {
-  strcpy(formattedSplits, SPLITS_DISPLAY_NONE);
+  window_set_click_config_provider(option_window, (ClickConfigProvider) clear_splits_click_config_provider);
 
-  // Clear splits.
-  splitIndex = -1;
-  splitDisplayIndex = 0;
-  select_splits_display_content();
-
-  // If the chronometer is running and was the last thing displayed before
-  // navigation to Clear splits, need to label Splits button for split 1.
-  if (selectedMode == MODE_CHRON && chronoRunSelect == RUN_START)
+  if (splitIndex > 0)
   {
-    snprintf(spt_rstButtonText, sizeof(spt_rstButtonText), "%s %i", SPLIT_TEXT, splitIndex + 2);
+    layer_set_hidden(text_layer_get_layer(optionDownLabelLayer), true);
+    text_layer_set_text(optionContentLayer, clearSplitsText);
+  }
+  else
+  {
+    layer_set_hidden(text_layer_get_layer(optionUpLabelLayer), true);
+    layer_set_hidden(text_layer_get_layer(optionDownLabelLayer), true);
+    text_layer_set_text(optionContentLayer, noSplitsText);
   }
 
-  text_layer_set_text(splitContentLayer, splitsDisplayContent);
-  window_stack_push(split_window, true /* Animated */);
+  window_stack_push(option_window, true /* Animated */);
 }
 
 
@@ -285,6 +395,16 @@ static void menuResetOptionHandler(int index, void *context)
   window_set_click_config_provider(option_window, (ClickConfigProvider) reset_option_click_config_provider);
 
   snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", resetOptionText, resetButtonClearsSplits);
+  text_layer_set_text(optionContentLayer, optionText);
+  window_stack_push(option_window, true /* Animated */);
+}
+
+
+static void menuColorOptionHandler(int index, void *context)
+{
+  window_set_click_config_provider(option_window, (ClickConfigProvider) Color_option_click_config_provider);
+
+  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", colorOptionText, colorOptionChoice);
   text_layer_set_text(optionContentLayer, optionText);
   window_stack_push(option_window, true /* Animated */);
 }
@@ -374,6 +494,20 @@ static void splits_up_single_click_handler(ClickRecognizerRef recognizer, Window
     select_splits_display_content();
 
     text_layer_set_text(splitContentLayer, splitsDisplayContent);
+
+    // If page going to is not first, show UP icon. KAB
+    if (splitDisplayIndex > 0)
+    {
+      layer_set_hidden(bitmap_layer_get_layer(splitUpIconLayer), false);
+    }
+    else
+    {
+      layer_set_hidden(bitmap_layer_get_layer(splitUpIconLayer), true);
+    }
+
+    // Always need a DOWN icon.
+    layer_set_hidden(bitmap_layer_get_layer(splitDnIconLayer), false);
+
   }
 }
 
@@ -390,6 +524,20 @@ static void splits_down_single_click_handler(ClickRecognizerRef recognizer, Wind
     select_splits_display_content();
 
     text_layer_set_text(splitContentLayer, splitsDisplayContent);
+
+    // Always need an UP icon.
+    layer_set_hidden(bitmap_layer_get_layer(splitUpIconLayer), false);
+
+    // If page going to is not last, show DOWN icon.
+    if (splitDisplayIndex + MAX_DISPLAY_SPLITS <= splitIndex)
+    {
+      layer_set_hidden(bitmap_layer_get_layer(splitDnIconLayer), false);
+    }
+    else
+    {
+      layer_set_hidden(bitmap_layer_get_layer(splitDnIconLayer), true);
+    }
+
   }
 }
 
@@ -403,6 +551,25 @@ static void splits_click_config_provider(Window *window) {
 }
 
 //##################### Time/chrono window support ##########################
+
+// 
+static void tc_set_tc_layer_text() 
+{
+  // Remove ":ss" and set hours/minutes with remainder.
+  static char tempHhmm [MAX_TIME_TEXT_LEN];
+  int hhMmLen = strlen(timeText) - 3;
+  strncpy(tempHhmm, timeText, hhMmLen); 
+  tempHhmm[hhMmLen] = '\0';
+  text_layer_set_text(timeChronoHhmmLayer, tempHhmm);
+
+  //APP_LOG(APP_LOG_LEVEL_DEBUG, "len: %i, HHMM >%s<", hhMmLen, tempHhmm);
+
+  // Set seconds.
+  char * secStartPtr = &(timeText[hhMmLen + 1]);
+  text_layer_set_text(timeChronoSecLayer, secStartPtr);
+
+  //APP_LOG(APP_LOG_LEVEL_DEBUG, "SS >%s<", &(timeText[hhMmLen + 1]));
+}
 
 // Used by time/chronometer window. Called once per second.
 static void tc_handle_second_tick(struct tm *currentTime, TimeUnits units_changed) 
@@ -425,7 +592,8 @@ static void tc_handle_second_tick(struct tm *currentTime, TimeUnits units_change
     // Format.
     snprintf(timeText, sizeof(timeText), "%2i:%02i:%02i", hours, min, sec);
 
-    text_layer_set_text(timeChronoLayer, timeText);
+    //text_layer_set_text(timeChronoHhmmLayer, timeText);
+    tc_set_tc_layer_text();
   }
   else if (selectedMode == MODE_CLOCK)
   {
@@ -439,7 +607,8 @@ static void tc_handle_second_tick(struct tm *currentTime, TimeUnits units_change
                                                            currentTime->tm_min,
                                                            currentTime->tm_sec);
 
-    text_layer_set_text(timeChronoLayer, timeText);
+    //text_layer_set_text(timeChronoHhmmLayer, timeText);
+    tc_set_tc_layer_text();
 
     strftime(dateStr, 7, "%b", currentTime);
     snprintf(&(dateStr[3]), 4, " %i",  currentTime->tm_mday);
@@ -563,7 +732,8 @@ static void tc_select_single_click_handler(ClickRecognizerRef recognizer, Window
 static void tc_reset_timeout_handler(void *callback_data) {
 
   chronoElapsed = 0;
-  text_layer_set_text(timeChronoLayer, " 0:00:00");
+  text_layer_set_text(timeChronoHhmmLayer, " 0:00");
+  text_layer_set_text(timeChronoSecLayer, "00");
 
   strncpy(spt_rstButtonText, BLANK_TEXT, sizeof(spt_rstButtonText));
   text_layer_set_text(sptRstButtonLayer, spt_rstButtonText);
@@ -647,8 +817,10 @@ static void tc_down_down_handler(ClickRecognizerRef recognizer, Window *window) 
   {
     resetTimerHandle = app_timer_register(1000, tc_reset_timeout_handler, NULL);
 
-    strcpy(savedChronoText, text_layer_get_text(timeChronoLayer));
-    text_layer_set_text(timeChronoLayer, "HOLD");
+    strcpy(savedChronoHhmm, text_layer_get_text(timeChronoHhmmLayer));
+    strcpy(savedChronoSec, text_layer_get_text(timeChronoSecLayer));
+    text_layer_set_text(timeChronoHhmmLayer, "HOLD");
+    text_layer_set_text(timeChronoSecLayer, "");
     savedChronoElapsed = chronoElapsed;
 
     resetInProgress = true;
@@ -666,7 +838,7 @@ static void tc_down_up_handler(ClickRecognizerRef recognizer, Window *window) {
     if (resetInProgress == false)
     {
       //chronoElapsed = 0;
-      //text_layer_set_text(timeChronoLayer, " 0:00:00");
+      //text_layer_set_text(timeChronoHhmmLayer, " 0:00:00");
 
       //strncpy(spt_rstButtonText, BLANK_TEXT, sizeof(spt_rstButtonText));
       //text_layer_set_text(sptRstButtonLayer, spt_rstButtonText);
@@ -676,7 +848,8 @@ static void tc_down_up_handler(ClickRecognizerRef recognizer, Window *window) {
     // Button released before reset timeout completed - abort reset!
     else
     {
-      text_layer_set_text(timeChronoLayer, savedChronoText);
+      text_layer_set_text(timeChronoHhmmLayer, savedChronoHhmm);
+      text_layer_set_text(timeChronoSecLayer, savedChronoSec);
       chronoElapsed = savedChronoElapsed;
 
       app_timer_cancel(resetTimerHandle);
@@ -743,6 +916,7 @@ static void app_init() {
       splitIndex = saved_state.splitIndex;
       strncpy(resetButtonClearsSplits, saved_state.resetButtonClearsSplits, sizeof(resetButtonClearsSplits));
       strncpy(splitsFullReplaceOldest, saved_state.splitsFullReplaceOldest, sizeof(splitsFullReplaceOldest));
+      strncpy(colorOptionChoice, saved_state.colorOptionChoice, sizeof(colorOptionChoice));
     }
     else
     {
@@ -758,13 +932,16 @@ static void app_init() {
     }
   }
 
-  // Font for time and chronometer.
-  time_font = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_UNIVERS_COND_MED_36));
+  // Fonts for time and chronometer.
+  hhmm_font = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_UNIVERS_COND_MED_46));
+  sec_font = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_UNIVERS_COND_MED_24));
 
   // Get graphics.
   menuIcon = gbitmap_create_with_resource(RESOURCE_ID_MENU_IMAGE);
   light_image = gbitmap_create_with_resource(RESOURCE_ID_LIGHT_ICON);
   ss_image = gbitmap_create_with_resource(RESOURCE_ID_START_STOP);
+  up_image = gbitmap_create_with_resource(RESOURCE_ID_UP_ICON);
+  dn_image = gbitmap_create_with_resource(RESOURCE_ID_DN_ICON);
 
   // ### Menu window setup. ###
   menu_window = window_create();
@@ -791,7 +968,11 @@ static void app_init() {
                                   .subtitle = NULL,
                                   .callback = menuResetOptionHandler,
                                   .icon = NULL};
-  menuItems[5] = (SimpleMenuItem){.title = APP_VERSION,
+  menuItems[5] = (SimpleMenuItem){.title = "Color Option",
+                                  .subtitle = NULL,
+                                  .callback = menuColorOptionHandler,
+                                  .icon = NULL};
+  menuItems[6] = (SimpleMenuItem){.title = APP_VERSION,
                                   .subtitle = NULL,
                                   .callback = NULL,
                                   .icon = NULL};
@@ -813,30 +994,41 @@ static void app_init() {
   time_window = window_create();
   Layer * time_window_layer = window_get_root_layer(time_window);
   window_set_fullscreen(time_window, true);
-  window_set_background_color(time_window, GColorBlack);
+  window_set_background_color(time_window, GColorWhite);
 
   // Light icon area
-  lightLayer = bitmap_layer_create(GRect(84, 4, 16, 16));
+  lightLayer = bitmap_layer_create(GRect(82, 4, 16, 16));
   bitmap_layer_set_bitmap(lightLayer, light_image);
   layer_add_child(time_window_layer, bitmap_layer_get_layer(lightLayer));
 
   // Mode button
-  modeButtonLayer = text_layer_create(GRect(100, 0, 44, 20));
+  modeButtonLayer = text_layer_create(GRect(98, 0, 44, 20));
   text_layer_set_text_alignment(modeButtonLayer, GTextAlignmentRight);
   text_layer_set_font(modeButtonLayer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
-  text_layer_set_background_color(modeButtonLayer, GColorBlack);
-  text_layer_set_text_color(modeButtonLayer, GColorWhite);
+  text_layer_set_background_color(modeButtonLayer, GColorWhite);
+  text_layer_set_text_color(modeButtonLayer, GColorBlack);
   text_layer_set_text(modeButtonLayer, "/Mode");
   layer_add_child(time_window_layer, text_layer_get_layer(modeButtonLayer));
 
-  // Time/chronograph area
-  timeChronoLayer = text_layer_create(GRect(12, 61, 118, 38));
-  text_layer_set_text_alignment(timeChronoLayer, GTextAlignmentCenter);
-  text_layer_set_font(timeChronoLayer, time_font);
-  text_layer_set_background_color(timeChronoLayer, GColorBlack);
-  text_layer_set_text_color(timeChronoLayer, GColorWhite);
-  text_layer_set_text(timeChronoLayer, timeText);
-  layer_add_child(time_window_layer, text_layer_get_layer(timeChronoLayer));
+  // Time/chronograph area - Hours & Minutes
+  timeChronoHhmmLayer = text_layer_create(GRect(0, 55, 102, 46));
+  text_layer_set_text_alignment(timeChronoHhmmLayer, GTextAlignmentRight);
+  text_layer_set_font(timeChronoHhmmLayer, hhmm_font);
+  text_layer_set_background_color(timeChronoHhmmLayer, GColorWhite);
+  text_layer_set_text_color(timeChronoHhmmLayer, GColorBlack);
+
+  // Time/chronograph area - Seconds
+  timeChronoSecLayer = text_layer_create(GRect(104, 69, 26, 26));
+  text_layer_set_text_alignment(timeChronoSecLayer, GTextAlignmentLeft);
+  text_layer_set_font(timeChronoSecLayer, sec_font);
+  text_layer_set_background_color(timeChronoSecLayer, GColorWhite);
+  text_layer_set_text_color(timeChronoSecLayer, GColorBlack);
+
+  // Time/chronograph area - common
+  //text_layer_set_text(timeChronoHhmmLayer, timeText);
+  tc_set_tc_layer_text();
+  layer_add_child(time_window_layer, text_layer_get_layer(timeChronoHhmmLayer));
+  layer_add_child(time_window_layer, text_layer_get_layer(timeChronoSecLayer));
 
   // Start/stop area
   ssLayer = bitmap_layer_create(GRect(130, 67, 14, 30));
@@ -852,22 +1044,35 @@ static void app_init() {
   }
 
   // dateStr/info area
-  dateInfoLayer = text_layer_create(GRect(0, 101, 144, 20));
+  dateInfoLayer = text_layer_create(GRect(0, 105, 144, 28));
   text_layer_set_text_alignment(dateInfoLayer, GTextAlignmentCenter);
-  text_layer_set_font(dateInfoLayer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
-  text_layer_set_background_color(dateInfoLayer, GColorBlack);
-  text_layer_set_text_color(dateInfoLayer, GColorWhite);
+  //text_layer_set_font(dateInfoLayer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
+  text_layer_set_font(dateInfoLayer, sec_font);
+  text_layer_set_background_color(dateInfoLayer, GColorWhite);
+  text_layer_set_text_color(dateInfoLayer, GColorBlack);
   text_layer_set_text(dateInfoLayer, dateStr);
   layer_add_child(time_window_layer, text_layer_get_layer(dateInfoLayer));
 
   // Split/Reset button
-  sptRstButtonLayer = text_layer_create(GRect(0, 149, 144, 20));
+  sptRstButtonLayer = text_layer_create(GRect(0, 146, 142, 20));
   text_layer_set_text_alignment(sptRstButtonLayer, GTextAlignmentRight);
   text_layer_set_font(sptRstButtonLayer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
-  text_layer_set_background_color(sptRstButtonLayer, GColorBlack);
-  text_layer_set_text_color(sptRstButtonLayer, GColorWhite);
+  text_layer_set_background_color(sptRstButtonLayer, GColorWhite);
+  text_layer_set_text_color(sptRstButtonLayer, GColorBlack);
   text_layer_set_text(sptRstButtonLayer, spt_rstButtonText);
   layer_add_child(time_window_layer, text_layer_get_layer(sptRstButtonLayer));
+
+  // Color inversion option.
+  tcInverterLayer = inverter_layer_create(GRect(0, 0, 144, 168));
+  layer_add_child(time_window_layer, inverter_layer_get_layer(tcInverterLayer));
+  if (strcmp(colorOptionChoice, OPTION_CHOICE_NO) == 0)
+  {
+    layer_set_hidden(inverter_layer_get_layer(tcInverterLayer), true);
+  }
+  else
+  {
+    layer_set_hidden(inverter_layer_get_layer(tcInverterLayer), false);
+  }
 
   window_set_click_config_provider(time_window, (ClickConfigProvider) tc_click_config_provider);
 
@@ -882,25 +1087,35 @@ static void app_init() {
   split_window = window_create();
   Layer * split_window_layer = window_get_root_layer(split_window);
   window_set_fullscreen(split_window, true);
-  window_set_background_color(split_window, GColorWhite);
+  window_set_background_color(split_window, GColorBlack);
 
   // Title
   splitTitleLayer = text_layer_create(GRect(0, 0, 144, 28));
   text_layer_set_text_alignment(splitTitleLayer, GTextAlignmentCenter);
   text_layer_set_font(splitTitleLayer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
-  text_layer_set_background_color(splitTitleLayer, GColorBlack);
-  text_layer_set_text_color(splitTitleLayer, GColorWhite);
+  text_layer_set_background_color(splitTitleLayer, GColorWhite);
+  text_layer_set_text_color(splitTitleLayer, GColorBlack);
   text_layer_set_text(splitTitleLayer, "Splits");
   layer_add_child(split_window_layer, text_layer_get_layer(splitTitleLayer));
+
+  // UP icon
+  splitUpIconLayer = bitmap_layer_create(GRect(129, 4, 15, 15));
+  bitmap_layer_set_bitmap(splitUpIconLayer, up_image);
+  layer_add_child(split_window_layer, bitmap_layer_get_layer(splitUpIconLayer));
 
   // Splits content
   splitContentLayer = text_layer_create(GRect(0, 32, 144, 136));
   text_layer_set_text_alignment(splitContentLayer, GTextAlignmentCenter);
   text_layer_set_font(splitContentLayer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
-  text_layer_set_background_color(splitContentLayer, GColorBlack);
-  text_layer_set_text_color(splitContentLayer, GColorWhite);
+  text_layer_set_background_color(splitContentLayer, GColorWhite);
+  text_layer_set_text_color(splitContentLayer, GColorBlack);
   text_layer_set_text(splitContentLayer, splitsDisplayContent);
   layer_add_child(split_window_layer, text_layer_get_layer(splitContentLayer));
+
+  // DOWN icon
+  splitDnIconLayer = bitmap_layer_create(GRect(129, 157, 15, 15));
+  bitmap_layer_set_bitmap(splitDnIconLayer, dn_image);
+  layer_add_child(split_window_layer, bitmap_layer_get_layer(splitDnIconLayer));
 
   window_set_click_config_provider(split_window, (ClickConfigProvider) splits_click_config_provider);
 
@@ -910,38 +1125,41 @@ static void app_init() {
   option_window = window_create();
   Layer * option_window_layer = window_get_root_layer(option_window);
   window_set_fullscreen(option_window, true);
-  window_set_background_color(option_window, GColorBlack);
+  window_set_background_color(option_window, GColorWhite);
 
   // Up button label - "Yes"
-  optionUpLabelLayer = text_layer_create(GRect(0, 0, 144, 28));
+  optionUpLabelLayer = text_layer_create(GRect(0, 0, 142, 28));
   text_layer_set_text_alignment(optionUpLabelLayer, GTextAlignmentRight);
   text_layer_set_font(optionUpLabelLayer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
-  text_layer_set_background_color(optionUpLabelLayer, GColorBlack);
-  text_layer_set_text_color(optionUpLabelLayer, GColorWhite);
+  text_layer_set_background_color(optionUpLabelLayer, GColorWhite);
+  text_layer_set_text_color(optionUpLabelLayer, GColorBlack);
   text_layer_set_text(optionUpLabelLayer, OPTION_CHOICE_YES);
   layer_add_child(option_window_layer, text_layer_get_layer(optionUpLabelLayer));
 
   // Option content
-  optionContentLayer = text_layer_create(GRect(0, 32, 144, 136));
+  optionContentLayer = text_layer_create(GRect(4, 32, 136, 136));
   text_layer_set_text_alignment(optionContentLayer, GTextAlignmentCenter);
   text_layer_set_font(optionContentLayer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
-  text_layer_set_background_color(optionContentLayer, GColorBlack);
-  text_layer_set_text_color(optionContentLayer, GColorWhite);
+  text_layer_set_background_color(optionContentLayer, GColorWhite);
+  text_layer_set_text_color(optionContentLayer, GColorBlack);
   text_layer_set_text(optionContentLayer, "test");
   layer_add_child(option_window_layer, text_layer_get_layer(optionContentLayer));
 
   // Down button label - "No"
-  optionDownLabelLayer = text_layer_create(GRect(0, 141, 144, 26));
+  optionDownLabelLayer = text_layer_create(GRect(0, 141, 142, 26));
   text_layer_set_text_alignment(optionDownLabelLayer, GTextAlignmentRight);
   text_layer_set_font(optionDownLabelLayer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
-  text_layer_set_background_color(optionDownLabelLayer, GColorBlack);
-  text_layer_set_text_color(optionDownLabelLayer, GColorWhite);
+  text_layer_set_background_color(optionDownLabelLayer, GColorWhite);
+  text_layer_set_text_color(optionDownLabelLayer, GColorBlack);
   text_layer_set_text(optionDownLabelLayer, OPTION_CHOICE_NO);
   layer_add_child(option_window_layer, text_layer_get_layer(optionDownLabelLayer));
 
   // Note: window_set_click_config_provider() for option window will be set based on option selected.
 
-  // ### Show menu window with time/chronometer immediately stacked on top it if. ###
+  // Hook to restore button labels, etc, that may need to be modified by some menu items.
+  window_set_window_handlers(menu_window, (WindowHandlers){.appear = menuAppearHandler});
+
+  // ### Show menu window with time/chronometer immediately stacked on top of it. ###
   window_stack_push(menu_window, true /* Animated */);
   window_stack_push(time_window, true /* Animated */);
 }
@@ -966,6 +1184,7 @@ static void app_deinit() {
   saved_state.splitIndex = splitIndex;
   strncpy(saved_state.resetButtonClearsSplits, resetButtonClearsSplits, sizeof(saved_state.resetButtonClearsSplits));
   strncpy(saved_state.splitsFullReplaceOldest, splitsFullReplaceOldest, sizeof(saved_state.splitsFullReplaceOldest));
+  strncpy(saved_state.colorOptionChoice, colorOptionChoice, sizeof(saved_state.colorOptionChoice));
 
   int bytes_written = 0;
   if (sizeof(saved_state_S) != (bytes_written = persist_write_data(persistent_data_key,
@@ -1002,14 +1221,22 @@ static void app_deinit() {
   window_destroy(option_window);
 
   // Destroy splits window.
+  bitmap_layer_destroy(splitDnIconLayer);
   text_layer_destroy(splitContentLayer);
+  bitmap_layer_destroy(splitUpIconLayer);
   text_layer_destroy(splitTitleLayer);
   window_destroy(split_window);
 
   // Destroy time/chrono window.
+  if (tcInverterLayer != 0)
+  {
+    inverter_layer_destroy(tcInverterLayer);
+    tcInverterLayer = 0;
+  }
   bitmap_layer_destroy(lightLayer);
   text_layer_destroy(modeButtonLayer);
-  text_layer_destroy(timeChronoLayer);
+  text_layer_destroy(timeChronoSecLayer);
+  text_layer_destroy(timeChronoHhmmLayer);
   text_layer_destroy(dateInfoLayer);
   bitmap_layer_destroy(ssLayer);
   text_layer_destroy(sptRstButtonLayer);
@@ -1020,6 +1247,8 @@ static void app_deinit() {
   gbitmap_destroy(light_image);
   gbitmap_destroy(menuIcon);
   gbitmap_destroy(ss_image);
+  gbitmap_destroy(up_image);
+  gbitmap_destroy(dn_image);
   simple_menu_layer_destroy(menuLayer);
   window_destroy(menu_window);
 }
