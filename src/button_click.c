@@ -1,10 +1,11 @@
 // WatchChronometer (c) 2014 Keith Blom - All rights reserved
+// v2.3 - Added day of week to watch display.
 // v2.2 - Rework time/chrono fonts/format for larger display. Add color inversion option.
 // v2.1.1 - Arrows on splits display.
 // v2.1 - Add option selection.
 // v2.0 - Add splits.
 
-#define APP_VERSION "Ver 2.2.0"
+#define APP_VERSION "Ver 2.3"
 
 // Standard includes
 #include "pebble.h"
@@ -78,10 +79,11 @@ static time_t chronoElapsed = 0;
 static char timeText[] = "00:00:00";
 
 // Month day or "CHRONO".
-static char dateStr[] = "Jan 31"; 
+// 2.1.1 static char dateStr[] = "Jan 31"; 
+static char dateStr[] = "Thursday/nSeptember 30"; 
 
 // Saved chrono time during wait for reset.
-static char savedChronoHhmm[] = "00:00"; 
+static char savedChronoHhmm[] = "00:00";
 static char savedChronoSec[] = "00"; 
 static time_t savedChronoElapsed = 0;
 static bool resetInProgress = false;
@@ -610,8 +612,9 @@ static void tc_handle_second_tick(struct tm *currentTime, TimeUnits units_change
     //text_layer_set_text(timeChronoHhmmLayer, timeText);
     tc_set_tc_layer_text();
 
-    strftime(dateStr, 7, "%b", currentTime);
-    snprintf(&(dateStr[3]), 4, " %i",  currentTime->tm_mday);
+    //2.1.1 strftime(dateStr, 7, "%b", currentTime);
+    //2.1.1 snprintf(&(dateStr[3]), 4, " %i",  currentTime->tm_mday);
+    strftime(dateStr, 22, "%A%n%B %d", currentTime);
     text_layer_set_text(dateInfoLayer, dateStr);
   }
 }
@@ -1011,14 +1014,16 @@ static void app_init() {
   layer_add_child(time_window_layer, text_layer_get_layer(modeButtonLayer));
 
   // Time/chronograph area - Hours & Minutes
-  timeChronoHhmmLayer = text_layer_create(GRect(0, 55, 102, 46));
+  // 2.1.1 timeChronoHhmmLayer = text_layer_create(GRect(0, 55, 102, 46));
+  timeChronoHhmmLayer = text_layer_create(GRect(0, 48, 102, 46));
   text_layer_set_text_alignment(timeChronoHhmmLayer, GTextAlignmentRight);
   text_layer_set_font(timeChronoHhmmLayer, hhmm_font);
   text_layer_set_background_color(timeChronoHhmmLayer, GColorWhite);
   text_layer_set_text_color(timeChronoHhmmLayer, GColorBlack);
 
   // Time/chronograph area - Seconds
-  timeChronoSecLayer = text_layer_create(GRect(104, 69, 26, 26));
+  // 2.1.1 timeChronoSecLayer = text_layer_create(GRect(104, 69, 26, 26));
+  timeChronoSecLayer = text_layer_create(GRect(104, 64, 26, 26));
   text_layer_set_text_alignment(timeChronoSecLayer, GTextAlignmentLeft);
   text_layer_set_font(timeChronoSecLayer, sec_font);
   text_layer_set_background_color(timeChronoSecLayer, GColorWhite);
@@ -1044,7 +1049,8 @@ static void app_init() {
   }
 
   // dateStr/info area
-  dateInfoLayer = text_layer_create(GRect(0, 105, 144, 28));
+  //2.1.1 dateInfoLayer = text_layer_create(GRect(0, 105, 144, 28));
+  dateInfoLayer = text_layer_create(GRect(10, 94, 120, 52));
   text_layer_set_text_alignment(dateInfoLayer, GTextAlignmentCenter);
   //text_layer_set_font(dateInfoLayer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
   text_layer_set_font(dateInfoLayer, sec_font);

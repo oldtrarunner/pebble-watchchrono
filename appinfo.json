@@ -51,7 +51,7 @@
     "shortName": "WatchChrono",
     "uuid": "5aa7341a-1547-49b3-8c28-a7dc55ea356b",
     "versionCode": 1,
-    "versionLabel": "2.2",
+    "versionLabel": "2.3",
     "watchapp": {
         "watchface": false
     }
