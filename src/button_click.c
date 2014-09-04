@@ -1,11 +1,12 @@
 // WatchChronometer (c) 2014 Keith Blom - All rights reserved
+// v2.4 - Abbreviate month.
 // v2.3 - Added day of week to watch display.
 // v2.2 - Rework time/chrono fonts/format for larger display. Add color inversion option.
 // v2.1.1 - Arrows on splits display.
 // v2.1 - Add option selection.
 // v2.0 - Add splits.
 
-#define APP_VERSION "Ver 2.3"
+#define APP_VERSION "Ver 2.4"
 
 // Standard includes
 #include "pebble.h"
@@ -614,7 +615,7 @@ static void tc_handle_second_tick(struct tm *currentTime, TimeUnits units_change
 
     //2.1.1 strftime(dateStr, 7, "%b", currentTime);
     //2.1.1 snprintf(&(dateStr[3]), 4, " %i",  currentTime->tm_mday);
-    strftime(dateStr, 22, "%A%n%B %d", currentTime);
+    strftime(dateStr, 22, "%A%n%b %d", currentTime);
     text_layer_set_text(dateInfoLayer, dateStr);
   }
 }
