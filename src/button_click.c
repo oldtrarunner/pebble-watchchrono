@@ -81,7 +81,7 @@ static char timeText[] = "00:00:00";
 
 // Month day or "CHRONO".
 // 2.1.1 static char dateStr[] = "Jan 31"; 
-static char dateStr[] = "Thursday/nSeptember 30"; 
+static char dateStr[] = "Wednesday/nSep 30"; 
 
 // Saved chrono time during wait for reset.
 static char savedChronoHhmm[] = "00:00";
@@ -149,13 +149,12 @@ typedef struct saved_state_S
 {
   short selectedMode;
   char timeText [MAX_TIME_TEXT_LEN];
-  char dateStr [7];
+  char dateStr [17];
   short chronoRunSelect;
   time_t chronoElapsed;
   time_t closeTm;
   char spt_rstButtonText[SPLIT_TEXT_MAX_LEN];
   bool chronoHasBeenReset;
-  //time_t unused;
   char colorOptionChoice[OPTION_CHOICE_MAX_LEN];
   time_t splits[MAX_SPLIT_INDEX + 1];
   int splitIndex;
@@ -615,7 +614,9 @@ static void tc_handle_second_tick(struct tm *currentTime, TimeUnits units_change
 
     //2.1.1 strftime(dateStr, 7, "%b", currentTime);
     //2.1.1 snprintf(&(dateStr[3]), 4, " %i",  currentTime->tm_mday);
-    strftime(dateStr, 22, "%A%n%b %d", currentTime);
+    strftime(dateStr, 22, "%A%n%b", currentTime);
+    int dayStartOff = strlen(dateStr);
+    snprintf(&(dateStr[dayStartOff]), 4, " %i",  currentTime->tm_mday);
     text_layer_set_text(dateInfoLayer, dateStr);
   }
 }
