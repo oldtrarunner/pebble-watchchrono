@@ -1,4 +1,6 @@
 // WatchChronometer (c) 2014 Keith Blom - All rights reserved
+// v2.5 - Support 99 splits
+// v2.4.1 - Remove leading zero on date.
 // v2.4 - Abbreviate month.
 // v2.3 - Added day of week to watch display.
 // v2.2 - Rework time/chrono fonts/format for larger display. Add color inversion option.
@@ -105,12 +107,9 @@ static char SPLIT_TEXT[] = "Split";     // Will be appended with next available 
 static char SPLIT_TEXT_FULL[] = "Split Full";
 static char spt_rstButtonText[SPLIT_TEXT_MAX_LEN] = ""; // Space for "Split Full" w/ null terminator
 
-// Key to access persistent data.
-static const uint32_t  persistent_data_key = 1;
-
 // Splits. Earliest first. Split format " 1) 12:34:56" plus newline/null.
 #define SPLIT_INDEX_RESET -1
-#define MAX_SPLIT_INDEX 29
+#define MAX_SPLIT_INDEX 98
 #define MAX_DISPLAY_SPLITS 5
 #define CHARS_PER_SPLIT 13
 static time_t splits[MAX_SPLIT_INDEX + 1];
@@ -144,6 +143,15 @@ static char splitsFullReplaceOldest[OPTION_CHOICE_MAX_LEN] = OPTION_CHOICE_NO;
 static char colorOptionText[] = "Display time and chrono with white text on black background:";
 static char colorOptionChoice[OPTION_CHOICE_MAX_LEN] = OPTION_CHOICE_NO;
 
+// Keys to access persistent data.
+static const uint32_t  persistent_data_key = 1;
+static const uint32_t  extended_splits_key = 2;
+
+// Divide splits between two sets of persistent data so do not exceed 256 byte max size.
+// Sum of BASE and EXTENDED must equal (MAX_SPLIT_INDEX + 1).
+#define BASE_SPLIT_CNT 47
+#define EXTENDED_SPLIT_CNT 52
+
 // Structure to save state when app is not running.
 typedef struct saved_state_S
 {
@@ -156,11 +164,18 @@ typedef struct saved_state_S
   char spt_rstButtonText[SPLIT_TEXT_MAX_LEN];
   bool chronoHasBeenReset;
   char colorOptionChoice[OPTION_CHOICE_MAX_LEN];
-  time_t splits[MAX_SPLIT_INDEX + 1];
+  time_t splits[BASE_SPLIT_CNT];
   int splitIndex;
   char resetButtonClearsSplits[OPTION_CHOICE_MAX_LEN];
   char splitsFullReplaceOldest[OPTION_CHOICE_MAX_LEN];
 } __attribute__((__packed__)) saved_state_S;
+
+
+// Structure to save extended splits
+typedef struct saved_splits_S
+{
+  time_t splits[EXTENDED_SPLIT_CNT];
+} __attribute__((__packed__)) saved_splits_S;
 
 
 
@@ -614,7 +629,7 @@ static void tc_handle_second_tick(struct tm *currentTime, TimeUnits units_change
 
     //2.1.1 strftime(dateStr, 7, "%b", currentTime);
     //2.1.1 snprintf(&(dateStr[3]), 4, " %i",  currentTime->tm_mday);
-    strftime(dateStr, 22, "%A%n%b", currentTime);
+    strftime(dateStr, 17, "%A%n%b", currentTime);
     int dayStartOff = strlen(dateStr);
     snprintf(&(dateStr[dayStartOff]), 4, " %i",  currentTime->tm_mday);
     text_layer_set_text(dateInfoLayer, dateStr);
@@ -884,7 +899,7 @@ NULL);
 //##################### Common support #####################################
 
 static void app_init() {
-
+  
   // ### Restore state if exists. ###
   if (persist_exists(persistent_data_key))
   {
@@ -915,22 +930,63 @@ static void app_init() {
       strncpy(spt_rstButtonText, saved_state.spt_rstButtonText, sizeof(spt_rstButtonText));
       chronoHasBeenReset = saved_state.chronoHasBeenReset;
       for (int i = 0; i <= MAX_SPLIT_INDEX; i++)
-      {
-        splits[i] = saved_state.splits[i];
-      }
-      splitIndex = saved_state.splitIndex;
       strncpy(resetButtonClearsSplits, saved_state.resetButtonClearsSplits, sizeof(resetButtonClearsSplits));
       strncpy(splitsFullReplaceOldest, saved_state.splitsFullReplaceOldest, sizeof(splitsFullReplaceOldest));
       strncpy(colorOptionChoice, saved_state.colorOptionChoice, sizeof(colorOptionChoice));
+
+      // Get saved extended splits before restoring all splits.
+      if (persist_exists(extended_splits_key))
+      {
+        saved_splits_S saved_splits;
+        int bytes_read = 0;
+        if (sizeof(saved_splits_S) == (bytes_read = persist_read_data(extended_splits_key,
+                                                                     (void *)&saved_splits,
+                                                                     sizeof(saved_splits_S))))
+        {
+          for (int i = 0; i < BASE_SPLIT_CNT; i++)
+          {
+            splits[i] = saved_state.splits[i];
+          }
+
+
+          for (int i = 0; i < EXTENDED_SPLIT_CNT; i++)
+          {
+            splits[BASE_SPLIT_CNT + i] = saved_splits.splits[i];
+          }
+
+          splitIndex = saved_state.splitIndex;
+        }
+
+        else
+        {
+          APP_LOG(APP_LOG_LEVEL_DEBUG, "error during persist_read_data(saved_splits). bytes read = %i", bytes_read);
+          for (int i = 0; i <= MAX_SPLIT_INDEX; i++)
+          {
+            splits[i] = 0;
+          }
+        }
+      }
+      else
+      {
+        APP_LOG(APP_LOG_LEVEL_DEBUG, "persist_exists(saved_splits) returned false");
+        for (int i = 0; i <= MAX_SPLIT_INDEX; i++)
+        {
+          splits[i] = 0;
+        }
+      }
     }
     else
     {
-      //APP_LOG(APP_LOG_LEVEL_DEBUG, "error during persist_read_data(). bytes read = %i", bytes_read);
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "error during persist_read_data(saved_state). bytes read = %i", bytes_read);
+      for (int i = 0; i <= MAX_SPLIT_INDEX; i++)
+      {
+        splits[i] = 0;
+      }
     }
   }
   else
   {
-    //APP_LOG(APP_LOG_LEVEL_DEBUG, "persist_exists() returned false");
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "persist_exists(saved_state) returned false");
     for (int i = 0; i <= MAX_SPLIT_INDEX; i++)
     {
       splits[i] = 0;
@@ -1185,7 +1241,7 @@ static void app_deinit() {
   saved_state.closeTm = time(NULL);
   strncpy(saved_state.spt_rstButtonText, spt_rstButtonText, sizeof(saved_state.spt_rstButtonText)); 
   saved_state.chronoHasBeenReset = chronoHasBeenReset;
-  for (int i = 0; i <= MAX_SPLIT_INDEX; i++)
+  for (int i = 0; i < BASE_SPLIT_CNT; i++)
   {
     saved_state.splits[i] = splits[i];
   }
@@ -1199,9 +1255,10 @@ static void app_deinit() {
                                                                    (void *)&saved_state,
                                                                    sizeof(saved_state_S))))
   {
-    //APP_LOG(APP_LOG_LEVEL_DEBUG, "error during persist_write_data(). bytes written = %i", bytes_written);
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "error during persist_write_data(saved_state). bytes written = %i", bytes_written);
 
-    // Delete peristent data when a problem has occurred saving it.
+    // Delete all peristent data when a problem has occurred saving any of it.
+    persist_delete(extended_splits_key);
     persist_delete(persistent_data_key);
   }
   else
@@ -1210,6 +1267,29 @@ static void app_deinit() {
     //                             saved_state.selectedMode,
     //                             saved_state.chronoRunSelect,
     //                             (int)saved_state.closeTm);
+
+    // Save extended splits.
+    saved_splits_S saved_splits;
+    for (int i = 0; i < EXTENDED_SPLIT_CNT; i++)
+    {
+      saved_splits.splits[i] = splits[BASE_SPLIT_CNT + i];
+    }
+
+    bytes_written = 0; 
+    if (sizeof(saved_splits_S) != (bytes_written = persist_write_data(extended_splits_key,
+                                                                     (void *)&saved_splits,
+                                                                     sizeof(saved_splits_S))))
+    {
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "error during persist_write_data(extended_splits). bytes written = %i", bytes_written);
+
+      // Delete all peristent data when a problem has occurred saving any of it.
+      persist_delete(extended_splits_key);
+      persist_delete(persistent_data_key);
+    }
+    else
+    {
+      APP_LOG(APP_LOG_LEVEL_DEBUG, "all state data saved");
+    }
   }
 
   // Stop reset timer if running.
