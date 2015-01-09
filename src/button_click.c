@@ -8,7 +8,7 @@
 // v2.1 - Add option selection.
 // v2.0 - Add splits.
 
-#define APP_VERSION "Ver 2.4"
+#define APP_VERSION "Ver 3.0"
 
 // Standard includes
 #include "pebble.h"
@@ -25,7 +25,7 @@ static Window *split_window;
 static Window *time_window; 
 
 // Menu window layers and associated data.
-#define NBR_MENU_ITEMS 7
+#define NBR_MENU_ITEMS 6
 static SimpleMenuLayer *menuLayer;
 static SimpleMenuItem menuItems[NBR_MENU_ITEMS];
 static SimpleMenuSection menuSection[1];
@@ -102,6 +102,7 @@ static bool chronoHasBeenReset = true;
 // Split/reset button text.
 #define SPLIT_TEXT_MAX_LEN 11
 static char BLANK_TEXT[] = "";
+static char OPTIONS_TEXT[] = "Options";
 static char RESET_TEXT[] = "Reset";
 static char SPLIT_TEXT[] = "Split";     // Will be appended with next available split number.
 static char SPLIT_TEXT_FULL[] = "Split Full";
@@ -683,17 +684,21 @@ static void tc_up_long_click_handler(ClickRecognizerRef recognizer, Window *wind
     {
       strncpy(spt_rstButtonText, RESET_TEXT, sizeof(spt_rstButtonText));
     }
-    // else already BLANK from watch display
+    // Blank when in reset state
+    else
+    {
+      strncpy(spt_rstButtonText, BLANK_TEXT, sizeof(spt_rstButtonText));
+    }
 
     text_layer_set_text(sptRstButtonLayer, spt_rstButtonText);
   }
 
-  // WATCH mode
+  // Switch to WATCH mode.
   else
   {
     layer_set_hidden(bitmap_layer_get_layer(ssLayer), true);
 
-    strncpy(spt_rstButtonText, BLANK_TEXT, sizeof(spt_rstButtonText));
+    strncpy(spt_rstButtonText, OPTIONS_TEXT, sizeof(spt_rstButtonText));
     text_layer_set_text(sptRstButtonLayer, spt_rstButtonText);
   }
 }
@@ -772,59 +777,72 @@ static void tc_reset_timeout_handler(void *callback_data) {
 static void tc_down_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
   //APP_LOG(APP_LOG_LEVEL_DEBUG, "entered tc_down_single_click_handler (split button)");
 
-  // Must be displaying chrono and running.
-  if (selectedMode == MODE_CHRON && chronoRunSelect == RUN_START)
+  // CHRONO mode.
+  if (selectedMode == MODE_CHRON)
   {
-    // If full, determine behavior based on selected setting.
-    if (splitIndex == MAX_SPLIT_INDEX)
+    // Process as split request if running.
+    if (chronoRunSelect == RUN_START)
     {
-      // If saving latest, throw away oldest to make room for new.
-      //if (splitButtonBehavior == SPLITS_KEEP_LATEST)
-      if (strcmp(splitsFullReplaceOldest, OPTION_CHOICE_YES) == 0)
-      {
-        for (int i = 1; i <= MAX_SPLIT_INDEX; i++)
-        {
-          splits[i - 1] = splits [i];
-        }
-
-        splits[splitIndex] = chronoElapsed;
-      }
-      // else - saving oldest so throw request away this request
-    }
-
-    // Buffer is not full.
-    else
-    {
-      splitIndex++;
-      splits[splitIndex] = chronoElapsed;
-
-      // If split buffer is now full, determine how to update splits button label.
+      // If full, determine behavior based on selected setting.
       if (splitIndex == MAX_SPLIT_INDEX)
       {
-        // If we're saving the oldest, set label to indicate splits buffer is now full.
-        //if (splitButtonBehavior == SPLITS_KEEP_OLDEST)
-        if (strcmp(splitsFullReplaceOldest, OPTION_CHOICE_NO) == 0)
+        // If saving latest, throw away oldest to make room for new.
+        //if (splitButtonBehavior == SPLITS_KEEP_LATEST)
+        if (strcmp(splitsFullReplaceOldest, OPTION_CHOICE_YES) == 0)
         {
-          snprintf(spt_rstButtonText, sizeof(spt_rstButtonText), "%s", SPLIT_TEXT_FULL);
-        }
+          for (int i = 1; i <= MAX_SPLIT_INDEX; i++)
+          {
+            splits[i - 1] = splits [i];
+          }
 
-        // We're saving latest, so set label to indicate last slot number.
-        else
-        {
-          snprintf(spt_rstButtonText, sizeof(spt_rstButtonText), "%s %i", SPLIT_TEXT, splitIndex + 1);
+          splits[splitIndex] = chronoElapsed;
         }
+        // else - saving oldest so throw request away this request
       }
 
-      // Splits buffer is not full, update split button label to reflect next available slot.
-      // splitIndex is set to last used, so increment by 2: 1 to make count + 1 to make next
+      // Buffer is not full.
       else
       {
-        snprintf(spt_rstButtonText, sizeof(spt_rstButtonText), "%s %i", SPLIT_TEXT, splitIndex + 2);
-      }
+        splitIndex++;
+        splits[splitIndex] = chronoElapsed;
 
-      // Update the display.
-      text_layer_set_text(sptRstButtonLayer, spt_rstButtonText);
+        // If split buffer is now full, determine how to update splits button label.
+        if (splitIndex == MAX_SPLIT_INDEX)
+        {
+          // If we're saving the oldest, set label to indicate splits buffer is now full.
+          //if (splitButtonBehavior == SPLITS_KEEP_OLDEST)
+          if (strcmp(splitsFullReplaceOldest, OPTION_CHOICE_NO) == 0)
+          {
+            snprintf(spt_rstButtonText, sizeof(spt_rstButtonText), "%s", SPLIT_TEXT_FULL);
+          }
+
+          // We're saving latest, so set label to indicate last slot number.
+          else
+          {
+            snprintf(spt_rstButtonText, sizeof(spt_rstButtonText), "%s %i", SPLIT_TEXT, splitIndex + 1);
+          }
+        }
+
+        // Splits buffer is not full, update split button label to reflect next available slot.
+        // splitIndex is set to last used, so increment by 2: 1 to make count + 1 to make next
+        else
+        {
+          snprintf(spt_rstButtonText, sizeof(spt_rstButtonText), "%s %i", SPLIT_TEXT, splitIndex + 2);
+        }
+
+        // Update the display.
+        text_layer_set_text(sptRstButtonLayer, spt_rstButtonText);
+      }
     }
+
+    // else - Ignore CHRONO mode if not running
+  }
+
+  // WATCH mode
+  else
+  {
+    // Display options menu.
+    window_stack_push(menu_window, true /* Animated */);
   }
 }
 
@@ -885,7 +903,7 @@ static void tc_down_up_handler(ClickRecognizerRef recognizer, Window *window) {
 static void tc_click_config_provider(Window *window) {
   //APP_LOG(APP_LOG_LEVEL_DEBUG, "entered tc_click_config_provider");
 
-  window_long_click_subscribe(BUTTON_ID_UP, 500, (ClickHandler) tc_up_long_click_handler, NULL);
+  window_long_click_subscribe(BUTTON_ID_UP, 300, (ClickHandler) tc_up_long_click_handler, NULL);
 
   window_single_click_subscribe(BUTTON_ID_SELECT, (ClickHandler) tc_select_single_click_handler);
 
@@ -957,6 +975,7 @@ static void app_init() {
           splitIndex = saved_state.splitIndex;
         }
 
+        // Fill in undefined fields if error reading persistent data.
         else
         {
           APP_LOG(APP_LOG_LEVEL_DEBUG, "error during persist_read_data(saved_splits). bytes read = %i", bytes_read);
@@ -964,8 +983,12 @@ static void app_init() {
           {
             splits[i] = 0;
           }
+
+          strncpy(spt_rstButtonText, OPTIONS_TEXT, sizeof(spt_rstButtonText));
         }
       }
+
+      // Fill in undefined fields if error reading persistent data.
       else
       {
         APP_LOG(APP_LOG_LEVEL_DEBUG, "persist_exists(saved_splits) returned false");
@@ -973,8 +996,12 @@ static void app_init() {
         {
           splits[i] = 0;
         }
+
+        strncpy(spt_rstButtonText, OPTIONS_TEXT, sizeof(spt_rstButtonText));
       }
     }
+
+    // Fill in undefined fields if error reading persistent data.
     else
     {
       APP_LOG(APP_LOG_LEVEL_DEBUG, "error during persist_read_data(saved_state). bytes read = %i", bytes_read);
@@ -982,8 +1009,12 @@ static void app_init() {
       {
         splits[i] = 0;
       }
+
+      strncpy(spt_rstButtonText, OPTIONS_TEXT, sizeof(spt_rstButtonText));
     }
   }
+
+  // Fill in undefined fields if error reading persistent data.
   else
   {
     APP_LOG(APP_LOG_LEVEL_DEBUG, "persist_exists(saved_state) returned false");
@@ -991,7 +1022,11 @@ static void app_init() {
     {
       splits[i] = 0;
     }
+
+    strncpy(spt_rstButtonText, OPTIONS_TEXT, sizeof(spt_rstButtonText));
   }
+
+  APP_LOG(APP_LOG_LEVEL_DEBUG, "persistent data restore complete");
 
   // Fonts for time and chronometer.
   hhmm_font = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_UNIVERS_COND_MED_46));
@@ -1009,31 +1044,27 @@ static void app_init() {
   Layer * menu_window_layer = window_get_root_layer(menu_window);
   window_set_fullscreen(menu_window, true);
 
-  menuItems[0] = (SimpleMenuItem){.title = "WatchChrono",
-                                  .subtitle = NULL,
-                                  .callback = menuWatchChronoHandler,
-                                  .icon = menuIcon};
-  menuItems[1] = (SimpleMenuItem){.title = "Display Splits",
+  menuItems[0] = (SimpleMenuItem){.title = "Display Splits",
                                   .subtitle = NULL,
                                   .callback = menuDisplaySplitsHandler,
                                   .icon = NULL};
-  menuItems[2] = (SimpleMenuItem){.title = "Clear Splits",
+  menuItems[1] = (SimpleMenuItem){.title = "Clear Splits",
                                   .subtitle = NULL,
                                   .callback = menuClearSplitsHandler,
                                   .icon = NULL};
-  menuItems[3] = (SimpleMenuItem){.title = "Splits Option",
+  menuItems[2] = (SimpleMenuItem){.title = "Splits Option",
                                   .subtitle = NULL,
                                   .callback = menuSplitsOptionHandler,
                                   .icon = NULL};
-  menuItems[4] = (SimpleMenuItem){.title = "Reset Option",
+  menuItems[3] = (SimpleMenuItem){.title = "Reset Option",
                                   .subtitle = NULL,
                                   .callback = menuResetOptionHandler,
                                   .icon = NULL};
-  menuItems[5] = (SimpleMenuItem){.title = "Color Option",
+  menuItems[4] = (SimpleMenuItem){.title = "Color Option",
                                   .subtitle = NULL,
                                   .callback = menuColorOptionHandler,
                                   .icon = NULL};
-  menuItems[6] = (SimpleMenuItem){.title = APP_VERSION,
+  menuItems[5] = (SimpleMenuItem){.title = APP_VERSION,
                                   .subtitle = NULL,
                                   .callback = NULL,
                                   .icon = NULL};
@@ -1223,8 +1254,6 @@ static void app_init() {
   // Hook to restore button labels, etc, that may need to be modified by some menu items.
   window_set_window_handlers(menu_window, (WindowHandlers){.appear = menuAppearHandler});
 
-  // ### Show menu window with time/chronometer immediately stacked on top of it. ###
-  window_stack_push(menu_window, true /* Animated */);
   window_stack_push(time_window, true /* Animated */);
 }
 

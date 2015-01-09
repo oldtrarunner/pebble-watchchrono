@@ -25,12 +25,14 @@
             },
             {
                 "characterRegex": "[a-zA-Z|0-9:. ]",
+                "compatibility": "2.7",
                 "file": "fonts/UniversCondensedMedium.ttf",
                 "name": "FONT_UNIVERS_COND_MED_46",
                 "type": "font"
             },
             {
                 "characterRegex": "[a-zA-Z|0-9:. ]",
+                "compatibility": "2.7",
                 "file": "fonts/UniversCondensedMedium.ttf",
                 "name": "FONT_UNIVERS_COND_MED_24",
                 "type": "font"
@@ -51,7 +53,7 @@
     "shortName": "WatchChrono",
     "uuid": "5aa7341a-1547-49b3-8c28-a7dc55ea356b",
     "versionCode": 1,
-    "versionLabel": "2.5",
+    "versionLabel": "3.0",
     "watchapp": {
         "watchface": false
     }
