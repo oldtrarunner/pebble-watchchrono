@@ -1,4 +1,6 @@
 // WatchChronometer (c) 2014 Keith Blom - All rights reserved
+// v4.0 - Support SDK v3.0. Replace black wth color select.
+// v3.0 - Moved options to Down button on Watch display.
 // v2.5 - Support 99 splits
 // v2.4.1 - Remove leading zero on date.
 // v2.4 - Abbreviate month.
@@ -8,7 +10,7 @@
 // v2.1 - Add option selection.
 // v2.0 - Add splits.
 
-#define APP_VERSION "Ver 3.0"
+#define APP_VERSION "Ver 4.0"
 
 // Standard includes
 #include "pebble.h"
@@ -17,6 +19,7 @@
 void format_splits_content();
 void setup_splits_window();
 void select_splits_display_content();
+static void tc_set_color();
 
 // Menu window is pushed to the stack first, then the time window below it.
 static Window *option_window; 
@@ -25,7 +28,11 @@ static Window *split_window;
 static Window *time_window; 
 
 // Menu window layers and associated data.
+#ifdef PBL_COLOR
+#define NBR_MENU_ITEMS 7
+#else
 #define NBR_MENU_ITEMS 6
+#endif
 static SimpleMenuLayer *menuLayer;
 static SimpleMenuItem menuItems[NBR_MENU_ITEMS];
 static SimpleMenuSection menuSection[1];
@@ -38,7 +45,7 @@ static TextLayer *timeChronoSecLayer;
 static BitmapLayer *ssLayer;
 static TextLayer *dateInfoLayer;
 static TextLayer *sptRstButtonLayer;
-static InverterLayer *tcInverterLayer = 0;
+//static InverterLayer *tcInverterLayer = 0;
 
 // Splits window layers.
 static TextLayer *splitTitleLayer;
@@ -69,10 +76,21 @@ GFont sec_font;
 
 // Graphics
 GBitmap* menuIcon;
-GBitmap *light_image;
-GBitmap *ss_image;
 GBitmap *up_image;
 GBitmap *dn_image;
+static GPath *startIconP = NULL;
+static GPath *stopIconP = NULL;
+static const GPathInfo STOP_PATH_INFO = {
+  .num_points = 4,
+  .points = (GPoint []) {{0, 8}, {13, 8}, {13, 21}, {0, 21}}
+};
+static const GPathInfo START_PATH_INFO = {
+  .num_points = 3,
+  .points = (GPoint []) {{0, 8}, {12, 15}, {0, 22}}
+};
+
+// SDK 3.0 support for color option
+GColor colorDark;
 
 // Time chronometer was started, or zero if reset.
 static time_t chronoElapsed = 0;
@@ -140,9 +158,33 @@ static char resetButtonClearsSplits[OPTION_CHOICE_MAX_LEN] = OPTION_CHOICE_YES;
 static char splitsOptionText[] = "When splits memory is Full, replace oldest with new:";
 static char splitsFullReplaceOldest[OPTION_CHOICE_MAX_LEN] = OPTION_CHOICE_NO;
 
-// Support for Color option.
-static char colorOptionText[] = "Display time and chrono with white text on black background:";
-static char colorOptionChoice[OPTION_CHOICE_MAX_LEN] = OPTION_CHOICE_NO;
+// Support for Color inversion.
+static char colorInversionText[] = "Display time and chrono with white text on dark background:";
+static char colorInversionChoice[OPTION_CHOICE_MAX_LEN] = OPTION_CHOICE_NO;
+
+// Support for Color selection.
+#ifdef PBL_COLOR
+#define MIN_COLOR_SELECTION_OFFSET 0
+#define MAX_COLOR_SELECTION_OFFSET 14
+static int colorSelectChoice = MIN_COLOR_SELECTION_OFFSET;
+static char * colorSelectText[MAX_COLOR_SELECTION_OFFSET + 1] = 
+  {"Red",
+   "Light Red",
+   "Dark Red",
+   "Orange",
+   "Light Orange",
+   "Dark Orange",
+   "Blue",
+   "Light Blue",
+   "Dark Blue",
+   "Green",
+   "Light Green",
+   "Dark Green",
+   "Purple",
+   "Light Purple",
+   "Dark Purple"};
+static GColor colorSelectColor[MAX_COLOR_SELECTION_OFFSET + 1];
+#endif
 
 // Keys to access persistent data.
 static const uint32_t  persistent_data_key = 1;
@@ -150,8 +192,8 @@ static const uint32_t  extended_splits_key = 2;
 
 // Divide splits between two sets of persistent data so do not exceed 256 byte max size.
 // Sum of BASE and EXTENDED must equal (MAX_SPLIT_INDEX + 1).
-#define BASE_SPLIT_CNT 47
-#define EXTENDED_SPLIT_CNT 52
+#define BASE_SPLIT_CNT 46
+#define EXTENDED_SPLIT_CNT 53
 
 // Structure to save state when app is not running.
 typedef struct saved_state_S
@@ -164,11 +206,14 @@ typedef struct saved_state_S
   time_t closeTm;
   char spt_rstButtonText[SPLIT_TEXT_MAX_LEN];
   bool chronoHasBeenReset;
-  char colorOptionChoice[OPTION_CHOICE_MAX_LEN];
+  char colorInversionChoice[OPTION_CHOICE_MAX_LEN];
   time_t splits[BASE_SPLIT_CNT];
   int splitIndex;
   char resetButtonClearsSplits[OPTION_CHOICE_MAX_LEN];
   char splitsFullReplaceOldest[OPTION_CHOICE_MAX_LEN];
+  #ifdef PBL_COLOR
+  int colorSelectChoice;
+  #endif
 } __attribute__((__packed__)) saved_state_S;
 
 
@@ -300,52 +345,129 @@ static void reset_option_click_config_provider(Window *window) {
   window_single_click_subscribe(BUTTON_ID_DOWN, (ClickHandler) reset_option_down_single_click_handler);
 }
 
-// ### Color option support ###
+// ### Color inversion support ###
 
-// Color option UP button.
-static void Color_option_up_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
-
-  // Save choice.
-  strncpy(colorOptionChoice, OPTION_CHOICE_YES, sizeof(colorOptionChoice));
-
-  // Update option window to reflect choice.
-  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", colorOptionText, colorOptionChoice);
-  text_layer_set_text(optionContentLayer, optionText);
-
-  // Change the time/chrono window to reflect the choice.
-  layer_set_hidden(inverter_layer_get_layer(tcInverterLayer), false);
-}
-
-
-// Color option DOWN button.
-static void Color_option_down_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
+// Color inversion UP button.
+static void color_inversion_up_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
 
   // Save choice.
-  strncpy(colorOptionChoice, OPTION_CHOICE_NO, sizeof(colorOptionChoice));
+  strncpy(colorInversionChoice, OPTION_CHOICE_YES, sizeof(colorInversionChoice));
 
   // Update option window to reflect choice.
-  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", colorOptionText, colorOptionChoice);
+  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", colorInversionText, colorInversionChoice);
   text_layer_set_text(optionContentLayer, optionText);
 
-  // Change the time/chrono window to reflect the choice.
-  layer_set_hidden(inverter_layer_get_layer(tcInverterLayer), true);
+  // tc_set_color() will be called by the time/chrono .appear window handler.
 }
 
 
-// Color option click configuration.
-static void Color_option_click_config_provider(Window *window) {
+// Color inversion DOWN button.
+static void color_inversion_down_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
 
-  window_single_click_subscribe(BUTTON_ID_UP, (ClickHandler) Color_option_up_single_click_handler);
+  // Save choice.
+  strncpy(colorInversionChoice, OPTION_CHOICE_NO, sizeof(colorInversionChoice));
 
-  window_single_click_subscribe(BUTTON_ID_DOWN, (ClickHandler) Color_option_down_single_click_handler);
+  // Update option window to reflect choice.
+  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", colorInversionText, colorInversionChoice);
+  text_layer_set_text(optionContentLayer, optionText);
+
+  // tc_set_color() will be called by the time/chrono .appear window handler.
 }
+
+
+// Color inversion click configuration.
+static void color_inversion_click_config_provider(Window *window) {
+
+  window_single_click_subscribe(BUTTON_ID_UP, (ClickHandler) color_inversion_up_single_click_handler);
+
+  window_single_click_subscribe(BUTTON_ID_DOWN, (ClickHandler) color_inversion_down_single_click_handler);
+}
+
+
+// ### Color select support ###
+
+#ifdef PBL_COLOR
+static void color_select_set_choice()
+{
+  // Adjust DOWN/UP button text.
+  if (colorSelectChoice >= MAX_COLOR_SELECTION_OFFSET)
+  {
+    //layer_set_hidden(text_layer_get_layer(optionUpLabelLayer), false);
+    //layer_set_hidden(text_layer_get_layer(optionDownLabelLayer), true);
+    text_layer_set_text(optionUpLabelLayer, "Prev");
+    text_layer_set_text(optionDownLabelLayer, "");
+  }
+  else if (colorSelectChoice <= MIN_COLOR_SELECTION_OFFSET)
+  {
+    //layer_set_hidden(text_layer_get_layer(optionUpLabelLayer), true);
+    //layer_set_hidden(text_layer_get_layer(optionDownLabelLayer), false);
+    text_layer_set_text(optionUpLabelLayer, "");
+    text_layer_set_text(optionDownLabelLayer, "Next");
+  }
+  else
+  {
+    //layer_set_hidden(text_layer_get_layer(optionUpLabelLayer), false);
+    //layer_set_hidden(text_layer_get_layer(optionDownLabelLayer), false);
+    text_layer_set_text(optionUpLabelLayer, "Prev");
+    text_layer_set_text(optionDownLabelLayer, "Next");
+  }
+
+  // Set current color text.
+  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s", colorSelectText[colorSelectChoice]);
+  text_layer_set_text(optionContentLayer, optionText);
+
+  // Set current color as foreground.
+  text_layer_set_text_color(optionContentLayer, colorSelectColor[colorSelectChoice]);
+}
+
+
+// Color select UP button.
+static void color_select_up_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
+
+  if (colorSelectChoice > MIN_COLOR_SELECTION_OFFSET)
+  {
+    // Save choice.
+    colorSelectChoice--;
+
+    // Update option window to reflect choice.
+    color_select_set_choice();
+  }
+}
+
+
+// Color select DOWN button.
+static void color_select_down_single_click_handler(ClickRecognizerRef recognizer, Window *window) {
+
+  if (colorSelectChoice < MAX_COLOR_SELECTION_OFFSET)
+  {
+    // Save choice.
+    colorSelectChoice++;
+
+    // Update option window to reflect choice.
+    color_select_set_choice();
+  }
+}
+
+
+// Color select click configuration.
+static void color_select_click_config_provider(Window *window) {
+
+  window_single_click_subscribe(BUTTON_ID_UP, (ClickHandler) color_select_up_single_click_handler);
+
+  window_single_click_subscribe(BUTTON_ID_DOWN, (ClickHandler) color_select_down_single_click_handler);
+}
+#endif
+
 
 //##################### Menu window support ################################
 
 void menuAppearHandler(struct Window *window) {
 
   layer_set_hidden(text_layer_get_layer(optionUpLabelLayer), false);
+  text_layer_set_text(optionUpLabelLayer, "Yes");
+
   layer_set_hidden(text_layer_get_layer(optionDownLabelLayer), false);
+  text_layer_set_text(optionDownLabelLayer, "No");
 }
 
 
@@ -418,14 +540,27 @@ static void menuResetOptionHandler(int index, void *context)
 }
 
 
-static void menuColorOptionHandler(int index, void *context)
+static void menuColorInversionHandler(int index, void *context)
 {
-  window_set_click_config_provider(option_window, (ClickConfigProvider) Color_option_click_config_provider);
+  window_set_click_config_provider(option_window, (ClickConfigProvider) color_inversion_click_config_provider);
 
-  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", colorOptionText, colorOptionChoice);
+  snprintf(optionText, OPTION_TEXT_MAX_LEN, "%s %s", colorInversionText, colorInversionChoice);
   text_layer_set_text(optionContentLayer, optionText);
   window_stack_push(option_window, true /* Animated */);
 }
+
+
+#ifdef PBL_COLOR
+static void menuColorSelectHandler(int index, void *context)
+{
+  window_set_click_config_provider(option_window, (ClickConfigProvider) color_select_click_config_provider);
+
+  color_select_set_choice();
+
+  window_stack_push(option_window, true /* Animated */);
+}
+#endif
+
 
 //##################### Split window support ################################
 
@@ -570,6 +705,128 @@ static void splits_click_config_provider(Window *window) {
 
 //##################### Time/chrono window support ##########################
 
+void timeAppearHandler(struct Window *window) {
+
+  tc_set_color();
+}
+
+
+void tc_lightLayer_update_proc (Layer *my_layer, GContext* ctx)
+{
+  // Dark foreground on white background.
+  if (strcmp(colorInversionChoice, OPTION_CHOICE_NO) == 0)
+  {
+    graphics_context_set_stroke_color(ctx, colorDark);
+  }
+
+  // White foreground on dark background.
+  else
+  {
+    graphics_context_set_stroke_color(ctx, GColorWhite);
+  }
+
+  graphics_draw_circle(ctx, GPoint(7, 7), 3);
+
+  // East West
+  graphics_draw_line(ctx, GPoint(2, 7), GPoint(3, 7));
+  graphics_draw_line(ctx, GPoint(11, 7), GPoint(12, 7));
+
+  // Northwest Southeast
+  graphics_draw_line(ctx, GPoint(3, 3), GPoint(4, 4));
+  graphics_draw_line(ctx, GPoint(10, 10), GPoint(11, 11));
+
+  // North South
+  graphics_draw_line(ctx, GPoint(7, 2), GPoint(7, 3));
+  graphics_draw_line(ctx, GPoint(7, 11), GPoint(7, 12));
+
+  // Northeast Southwest
+  graphics_draw_line(ctx, GPoint(11, 3), GPoint(10, 4));
+  graphics_draw_line(ctx, GPoint(3, 11), GPoint(4, 10));
+}
+
+
+void tc_ssLayer_update_proc (Layer *my_layer, GContext* ctx)
+{
+  // Dark foreground on white background.
+  if (strcmp(colorInversionChoice, OPTION_CHOICE_NO) == 0)
+  {
+    graphics_context_set_fill_color(ctx, colorDark);
+  }
+
+  // White foreground on dark background.
+  else
+  {
+    graphics_context_set_fill_color(ctx, GColorWhite);
+  }
+
+  // Set STOP icon when running.
+  if (chronoRunSelect == RUN_START)
+  {
+    gpath_draw_filled(ctx, stopIconP);
+  }
+
+  // Set START icon when stopped.
+  else
+  {
+    gpath_draw_filled(ctx, startIconP);
+  }
+}
+
+
+static void tc_set_color()
+{
+  #ifdef PBL_COLOR
+  colorDark = colorSelectColor[colorSelectChoice];
+  #else
+  colorDark = GColorBlack;
+  #endif
+
+  // Dark foreground on white background.
+  if (strcmp(colorInversionChoice, OPTION_CHOICE_NO) == 0)
+  {
+    window_set_background_color(time_window, GColorWhite);
+    text_layer_set_background_color(modeButtonLayer, GColorWhite);
+    text_layer_set_background_color(timeChronoHhmmLayer, GColorWhite);
+    text_layer_set_background_color(timeChronoSecLayer, GColorWhite);
+    text_layer_set_background_color(dateInfoLayer, GColorWhite);
+    text_layer_set_background_color(sptRstButtonLayer, GColorWhite);
+
+    bitmap_layer_set_background_color(ssLayer, GColorWhite);
+    bitmap_layer_set_background_color(lightLayer, GColorWhite);
+
+    text_layer_set_text_color(modeButtonLayer, colorDark);
+    text_layer_set_text_color(timeChronoHhmmLayer, colorDark);
+    text_layer_set_text_color(timeChronoSecLayer, colorDark);
+    text_layer_set_text_color(dateInfoLayer, colorDark);
+    text_layer_set_text_color(sptRstButtonLayer, colorDark);
+  }
+
+  // White foreground on dark background.
+  else
+  {
+    text_layer_set_text_color(modeButtonLayer, GColorWhite);
+    text_layer_set_text_color(timeChronoHhmmLayer, GColorWhite);
+    text_layer_set_text_color(timeChronoSecLayer, GColorWhite);
+    text_layer_set_text_color(dateInfoLayer, GColorWhite);
+    text_layer_set_text_color(sptRstButtonLayer, GColorWhite);
+
+    window_set_background_color(time_window, colorDark);
+    text_layer_set_background_color(modeButtonLayer, colorDark);
+    text_layer_set_background_color(timeChronoHhmmLayer, colorDark);
+    text_layer_set_background_color(timeChronoSecLayer, colorDark);
+    text_layer_set_background_color(dateInfoLayer, colorDark);
+    text_layer_set_background_color(sptRstButtonLayer, colorDark);
+
+    bitmap_layer_set_background_color(ssLayer, colorDark);
+    bitmap_layer_set_background_color(lightLayer, colorDark);
+  }
+
+  // Redraw graphics based on current color option to set foreground color.
+  layer_mark_dirty((Layer*)ssLayer);
+  layer_mark_dirty((Layer*)lightLayer);
+}
+
+
 // 
 static void tc_set_tc_layer_text() 
 {
@@ -610,7 +867,6 @@ static void tc_handle_second_tick(struct tm *currentTime, TimeUnits units_change
     // Format.
     snprintf(timeText, sizeof(timeText), "%2i:%02i:%02i", hours, min, sec);
 
-    //text_layer_set_text(timeChronoHhmmLayer, timeText);
     tc_set_tc_layer_text();
   }
   else if (selectedMode == MODE_CLOCK)
@@ -625,11 +881,8 @@ static void tc_handle_second_tick(struct tm *currentTime, TimeUnits units_change
                                                            currentTime->tm_min,
                                                            currentTime->tm_sec);
 
-    //text_layer_set_text(timeChronoHhmmLayer, timeText);
     tc_set_tc_layer_text();
 
-    //2.1.1 strftime(dateStr, 7, "%b", currentTime);
-    //2.1.1 snprintf(&(dateStr[3]), 4, " %i",  currentTime->tm_mday);
     strftime(dateStr, 17, "%A%n%b", currentTime);
     int dayStartOff = strlen(dateStr);
     snprintf(&(dateStr[dayStartOff]), 4, " %i",  currentTime->tm_mday);
@@ -749,6 +1002,9 @@ static void tc_select_single_click_handler(ClickRecognizerRef recognizer, Window
     }
 
     text_layer_set_text(sptRstButtonLayer, spt_rstButtonText);
+
+    // Redraw start/stop graphic based on current run state.
+    layer_mark_dirty((Layer*)ssLayer);
   }
 }
 
@@ -947,10 +1203,13 @@ static void app_init() {
       chronoElapsed = saved_state.chronoElapsed + timeSinceClosed;
       strncpy(spt_rstButtonText, saved_state.spt_rstButtonText, sizeof(spt_rstButtonText));
       chronoHasBeenReset = saved_state.chronoHasBeenReset;
-      for (int i = 0; i <= MAX_SPLIT_INDEX; i++)
+      //for (int i = 0; i <= MAX_SPLIT_INDEX; i++)
       strncpy(resetButtonClearsSplits, saved_state.resetButtonClearsSplits, sizeof(resetButtonClearsSplits));
       strncpy(splitsFullReplaceOldest, saved_state.splitsFullReplaceOldest, sizeof(splitsFullReplaceOldest));
-      strncpy(colorOptionChoice, saved_state.colorOptionChoice, sizeof(colorOptionChoice));
+      strncpy(colorInversionChoice, saved_state.colorInversionChoice, sizeof(colorInversionChoice));
+      #ifdef PBL_COLOR
+      colorSelectChoice = saved_state.colorSelectChoice;
+      #endif
 
       // Get saved extended splits before restoring all splits.
       if (persist_exists(extended_splits_key))
@@ -983,12 +1242,10 @@ static void app_init() {
           {
             splits[i] = 0;
           }
-
-          strncpy(spt_rstButtonText, OPTIONS_TEXT, sizeof(spt_rstButtonText));
         }
       }
 
-      // Fill in undefined fields if error reading persistent data.
+      // Fill in undefined fields if persistent data does not exit.
       else
       {
         APP_LOG(APP_LOG_LEVEL_DEBUG, "persist_exists(saved_splits) returned false");
@@ -996,8 +1253,6 @@ static void app_init() {
         {
           splits[i] = 0;
         }
-
-        strncpy(spt_rstButtonText, OPTIONS_TEXT, sizeof(spt_rstButtonText));
       }
     }
 
@@ -1014,7 +1269,7 @@ static void app_init() {
     }
   }
 
-  // Fill in undefined fields if error reading persistent data.
+  // Fill in undefined fields if persistent data does not exist.
   else
   {
     APP_LOG(APP_LOG_LEVEL_DEBUG, "persist_exists(saved_state) returned false");
@@ -1034,10 +1289,15 @@ static void app_init() {
 
   // Get graphics.
   menuIcon = gbitmap_create_with_resource(RESOURCE_ID_MENU_IMAGE);
-  light_image = gbitmap_create_with_resource(RESOURCE_ID_LIGHT_ICON);
-  ss_image = gbitmap_create_with_resource(RESOURCE_ID_START_STOP);
   up_image = gbitmap_create_with_resource(RESOURCE_ID_UP_ICON);
   dn_image = gbitmap_create_with_resource(RESOURCE_ID_DN_ICON);
+
+  // SDK 3.0 support for color ionversion.
+  #ifdef PBL_COLOR
+    colorDark = colorSelectColor[colorSelectChoice];
+  #else
+    colorDark = GColorBlack;
+  #endif
 
   // ### Menu window setup. ###
   menu_window = window_create();
@@ -1060,11 +1320,17 @@ static void app_init() {
                                   .subtitle = NULL,
                                   .callback = menuResetOptionHandler,
                                   .icon = NULL};
-  menuItems[4] = (SimpleMenuItem){.title = "Color Option",
+  menuItems[4] = (SimpleMenuItem){.title = "Color Inversion",
                                   .subtitle = NULL,
-                                  .callback = menuColorOptionHandler,
+                                  .callback = menuColorInversionHandler,
                                   .icon = NULL};
-  menuItems[5] = (SimpleMenuItem){.title = APP_VERSION,
+  #ifdef PBL_COLOR
+  menuItems[5] = (SimpleMenuItem){.title = "Color Select",
+                                  .subtitle = NULL,
+                                  .callback = menuColorSelectHandler,
+                                  .icon = NULL};
+  #endif
+  menuItems[NBR_MENU_ITEMS - 1] = (SimpleMenuItem){.title = APP_VERSION,
                                   .subtitle = NULL,
                                   .callback = NULL,
                                   .icon = NULL};
@@ -1086,19 +1352,16 @@ static void app_init() {
   time_window = window_create();
   Layer * time_window_layer = window_get_root_layer(time_window);
   window_set_fullscreen(time_window, true);
-  window_set_background_color(time_window, GColorWhite);
 
   // Light icon area
   lightLayer = bitmap_layer_create(GRect(82, 4, 16, 16));
-  bitmap_layer_set_bitmap(lightLayer, light_image);
+  layer_set_update_proc((Layer*)lightLayer, tc_lightLayer_update_proc);
   layer_add_child(time_window_layer, bitmap_layer_get_layer(lightLayer));
 
   // Mode button
   modeButtonLayer = text_layer_create(GRect(98, 0, 44, 20));
   text_layer_set_text_alignment(modeButtonLayer, GTextAlignmentRight);
   text_layer_set_font(modeButtonLayer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
-  text_layer_set_background_color(modeButtonLayer, GColorWhite);
-  text_layer_set_text_color(modeButtonLayer, GColorBlack);
   text_layer_set_text(modeButtonLayer, "/Mode");
   layer_add_child(time_window_layer, text_layer_get_layer(modeButtonLayer));
 
@@ -1107,26 +1370,22 @@ static void app_init() {
   timeChronoHhmmLayer = text_layer_create(GRect(0, 48, 102, 46));
   text_layer_set_text_alignment(timeChronoHhmmLayer, GTextAlignmentRight);
   text_layer_set_font(timeChronoHhmmLayer, hhmm_font);
-  text_layer_set_background_color(timeChronoHhmmLayer, GColorWhite);
-  text_layer_set_text_color(timeChronoHhmmLayer, GColorBlack);
 
   // Time/chronograph area - Seconds
-  // 2.1.1 timeChronoSecLayer = text_layer_create(GRect(104, 69, 26, 26));
   timeChronoSecLayer = text_layer_create(GRect(104, 64, 26, 26));
   text_layer_set_text_alignment(timeChronoSecLayer, GTextAlignmentLeft);
   text_layer_set_font(timeChronoSecLayer, sec_font);
-  text_layer_set_background_color(timeChronoSecLayer, GColorWhite);
-  text_layer_set_text_color(timeChronoSecLayer, GColorBlack);
 
   // Time/chronograph area - common
-  //text_layer_set_text(timeChronoHhmmLayer, timeText);
   tc_set_tc_layer_text();
   layer_add_child(time_window_layer, text_layer_get_layer(timeChronoHhmmLayer));
   layer_add_child(time_window_layer, text_layer_get_layer(timeChronoSecLayer));
 
   // Start/stop area
   ssLayer = bitmap_layer_create(GRect(130, 67, 14, 30));
-  bitmap_layer_set_bitmap(ssLayer, ss_image);
+  layer_set_update_proc((Layer*)ssLayer, tc_ssLayer_update_proc);
+  startIconP = gpath_create(&START_PATH_INFO);
+  stopIconP = gpath_create(&STOP_PATH_INFO);
   layer_add_child(time_window_layer, bitmap_layer_get_layer(ssLayer));
   if (selectedMode == MODE_CHRON)
   {
@@ -1138,13 +1397,9 @@ static void app_init() {
   }
 
   // dateStr/info area
-  //2.1.1 dateInfoLayer = text_layer_create(GRect(0, 105, 144, 28));
   dateInfoLayer = text_layer_create(GRect(10, 94, 120, 52));
   text_layer_set_text_alignment(dateInfoLayer, GTextAlignmentCenter);
-  //text_layer_set_font(dateInfoLayer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
   text_layer_set_font(dateInfoLayer, sec_font);
-  text_layer_set_background_color(dateInfoLayer, GColorWhite);
-  text_layer_set_text_color(dateInfoLayer, GColorBlack);
   text_layer_set_text(dateInfoLayer, dateStr);
   layer_add_child(time_window_layer, text_layer_get_layer(dateInfoLayer));
 
@@ -1152,22 +1407,12 @@ static void app_init() {
   sptRstButtonLayer = text_layer_create(GRect(0, 146, 142, 20));
   text_layer_set_text_alignment(sptRstButtonLayer, GTextAlignmentRight);
   text_layer_set_font(sptRstButtonLayer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
-  text_layer_set_background_color(sptRstButtonLayer, GColorWhite);
-  text_layer_set_text_color(sptRstButtonLayer, GColorBlack);
   text_layer_set_text(sptRstButtonLayer, spt_rstButtonText);
   layer_add_child(time_window_layer, text_layer_get_layer(sptRstButtonLayer));
 
-  // Color inversion option.
-  tcInverterLayer = inverter_layer_create(GRect(0, 0, 144, 168));
-  layer_add_child(time_window_layer, inverter_layer_get_layer(tcInverterLayer));
-  if (strcmp(colorOptionChoice, OPTION_CHOICE_NO) == 0)
-  {
-    layer_set_hidden(inverter_layer_get_layer(tcInverterLayer), true);
-  }
-  else
-  {
-    layer_set_hidden(inverter_layer_get_layer(tcInverterLayer), false);
-  }
+  //tc_set_color();
+  // Hook to call tc_set_color(). Allows it to be called just once on exit from color select.
+  window_set_window_handlers(time_window, (WindowHandlers){.appear = timeAppearHandler});
 
   window_set_click_config_provider(time_window, (ClickConfigProvider) tc_click_config_provider);
 
@@ -1249,6 +1494,24 @@ static void app_init() {
   text_layer_set_text(optionDownLabelLayer, OPTION_CHOICE_NO);
   layer_add_child(option_window_layer, text_layer_get_layer(optionDownLabelLayer));
 
+  #ifdef PBL_COLOR
+  colorSelectColor[0] = GColorFromRGB(255, 0, 0);     // red
+  colorSelectColor[1] = GColorFromRGB(255, 128, 128);
+  colorSelectColor[2] = GColorFromRGB(128, 0, 0);
+  colorSelectColor[3] = GColorFromRGB(192, 96, 0);   // orange
+  colorSelectColor[4] = GColorFromRGB(255, 192, 0);
+  colorSelectColor[5] = GColorFromRGB(128, 64, 0);
+  colorSelectColor[6] = GColorFromRGB(0, 0, 255);     // blue
+  colorSelectColor[7] = GColorFromRGB(128, 128, 255);
+  colorSelectColor[8] = GColorFromRGB(0, 0, 128);
+  colorSelectColor[9] = GColorFromRGB(0, 255, 0);     // green
+  colorSelectColor[10] = GColorFromRGB(128, 255, 128);
+  colorSelectColor[11] = GColorFromRGB(0, 128, 0);
+  colorSelectColor[12] = GColorFromRGB(128, 0, 128);   // purple
+  colorSelectColor[13] = GColorFromRGB(255, 0, 255);
+  colorSelectColor[14] = GColorFromRGB(96, 0, 96);
+  #endif
+
   // Note: window_set_click_config_provider() for option window will be set based on option selected.
 
   // Hook to restore button labels, etc, that may need to be modified by some menu items.
@@ -1277,13 +1540,16 @@ static void app_deinit() {
   saved_state.splitIndex = splitIndex;
   strncpy(saved_state.resetButtonClearsSplits, resetButtonClearsSplits, sizeof(saved_state.resetButtonClearsSplits));
   strncpy(saved_state.splitsFullReplaceOldest, splitsFullReplaceOldest, sizeof(saved_state.splitsFullReplaceOldest));
-  strncpy(saved_state.colorOptionChoice, colorOptionChoice, sizeof(saved_state.colorOptionChoice));
+  strncpy(saved_state.colorInversionChoice, colorInversionChoice, sizeof(saved_state.colorInversionChoice));
+  #ifdef PBL_COLOR
+  saved_state.colorSelectChoice = colorSelectChoice;
+  #endif
 
   int bytes_written = 0;
   if (sizeof(saved_state_S) != (bytes_written = persist_write_data(persistent_data_key,
                                                                    (void *)&saved_state,
                                                                    sizeof(saved_state_S))))
-  {
+  {  
     APP_LOG(APP_LOG_LEVEL_DEBUG, "error during persist_write_data(saved_state). bytes written = %i", bytes_written);
 
     // Delete all peristent data when a problem has occurred saving any of it.
@@ -1345,11 +1611,11 @@ static void app_deinit() {
   window_destroy(split_window);
 
   // Destroy time/chrono window.
-  if (tcInverterLayer != 0)
-  {
-    inverter_layer_destroy(tcInverterLayer);
-    tcInverterLayer = 0;
-  }
+  //if (tcInverterLayer != 0)
+  //{
+  //  inverter_layer_destroy(tcInverterLayer);
+  //  tcInverterLayer = 0;
+  //}
   bitmap_layer_destroy(lightLayer);
   text_layer_destroy(modeButtonLayer);
   text_layer_destroy(timeChronoSecLayer);
@@ -1361,9 +1627,11 @@ static void app_deinit() {
 
   // Destroy menu window.
   //APP_LOG(APP_LOG_LEVEL_DEBUG, "before menu destroy");
-  gbitmap_destroy(light_image);
+  //gbitmap_destroy(light_image);
   gbitmap_destroy(menuIcon);
-  gbitmap_destroy(ss_image);
+  //gbitmap_destroy(ss_image);
+  gpath_destroy(startIconP);
+  gpath_destroy(stopIconP);
   gbitmap_destroy(up_image);
   gbitmap_destroy(dn_image);
   simple_menu_layer_destroy(menuLayer);

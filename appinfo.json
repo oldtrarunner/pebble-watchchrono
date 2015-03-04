@@ -9,6 +9,12 @@
     "resources": {
         "media": [
             {
+                "file": "images/menu_image.png",
+                "menuIcon": true,
+                "name": "MENU_IMAGE",
+                "type": "png"
+            },
+            {
                 "file": "images/arrow_DN.png",
                 "name": "DN_ICON",
                 "type": "png"
@@ -16,11 +22,6 @@
             {
                 "file": "images/arrow_UP.png",
                 "name": "UP_ICON",
-                "type": "png"
-            },
-            {
-                "file": "images/light_icon.png",
-                "name": "LIGHT_ICON",
                 "type": "png"
             },
             {
@@ -36,24 +37,18 @@
                 "file": "fonts/UniversCondensedMedium.ttf",
                 "name": "FONT_UNIVERS_COND_MED_24",
                 "type": "font"
-            },
-            {
-                "file": "images/start_stop_icon.png",
-                "name": "START_STOP",
-                "type": "png"
-            },
-            {
-                "file": "images/menu_image.png",
-                "menuIcon": true,
-                "name": "MENU_IMAGE",
-                "type": "png"
             }
         ]
     },
+    "sdkVersion": "3",
     "shortName": "WatchChrono",
+    "targetPlatforms": [
+        "aplite",
+        "basalt"
+    ],
     "uuid": "5aa7341a-1547-49b3-8c28-a7dc55ea356b",
     "versionCode": 1,
-    "versionLabel": "3.0",
+    "versionLabel": "4.0",
     "watchapp": {
         "watchface": false
     }
