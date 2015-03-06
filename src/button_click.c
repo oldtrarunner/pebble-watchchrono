@@ -1,5 +1,5 @@
 // WatchChronometer (c) 2014 Keith Blom - All rights reserved
-// v4.0 - Support SDK v3.0. Replace black wth color select.
+// v4.0 - Support SDK v3.0. Replace black with color select.
 // v3.0 - Moved options to Down button on Watch display.
 // v2.5 - Support 99 splits
 // v2.4.1 - Remove leading zero on date.
@@ -165,10 +165,11 @@ static char colorInversionChoice[OPTION_CHOICE_MAX_LEN] = OPTION_CHOICE_NO;
 // Support for Color selection.
 #ifdef PBL_COLOR
 #define MIN_COLOR_SELECTION_OFFSET 0
-#define MAX_COLOR_SELECTION_OFFSET 14
-static int colorSelectChoice = MIN_COLOR_SELECTION_OFFSET;
+#define MAX_COLOR_SELECTION_OFFSET 15
+static int colorSelectChoice = 7;  // Blue
 static char * colorSelectText[MAX_COLOR_SELECTION_OFFSET + 1] = 
-  {"Red",
+  {"Black",
+   "Red",
    "Light Red",
    "Dark Red",
    "Orange",
@@ -185,7 +186,7 @@ static char * colorSelectText[MAX_COLOR_SELECTION_OFFSET + 1] =
    "Dark Purple"};
 static GColor colorSelectColor[MAX_COLOR_SELECTION_OFFSET + 1];
 #endif
-
+  
 // Keys to access persistent data.
 static const uint32_t  persistent_data_key = 1;
 static const uint32_t  extended_splits_key = 2;
@@ -1495,21 +1496,22 @@ static void app_init() {
   layer_add_child(option_window_layer, text_layer_get_layer(optionDownLabelLayer));
 
   #ifdef PBL_COLOR
-  colorSelectColor[0] = GColorFromRGB(255, 0, 0);     // red
-  colorSelectColor[1] = GColorFromRGB(255, 128, 128);
-  colorSelectColor[2] = GColorFromRGB(128, 0, 0);
-  colorSelectColor[3] = GColorFromRGB(192, 96, 0);   // orange
-  colorSelectColor[4] = GColorFromRGB(255, 192, 0);
-  colorSelectColor[5] = GColorFromRGB(128, 64, 0);
-  colorSelectColor[6] = GColorFromRGB(0, 0, 255);     // blue
-  colorSelectColor[7] = GColorFromRGB(128, 128, 255);
-  colorSelectColor[8] = GColorFromRGB(0, 0, 128);
-  colorSelectColor[9] = GColorFromRGB(0, 255, 0);     // green
-  colorSelectColor[10] = GColorFromRGB(128, 255, 128);
-  colorSelectColor[11] = GColorFromRGB(0, 128, 0);
-  colorSelectColor[12] = GColorFromRGB(128, 0, 128);   // purple
-  colorSelectColor[13] = GColorFromRGB(255, 0, 255);
-  colorSelectColor[14] = GColorFromRGB(96, 0, 96);
+  colorSelectColor[0] = GColorFromRGB(0, 0, 0);     // black
+  colorSelectColor[1] = GColorFromRGB(255, 0, 0);     // red
+  colorSelectColor[2] = GColorFromRGB(255, 128, 128);
+  colorSelectColor[3] = GColorFromRGB(128, 0, 0);
+  colorSelectColor[4] = GColorFromRGB(192, 96, 0);   // orange
+  colorSelectColor[5] = GColorFromRGB(255, 128, 0);
+  colorSelectColor[6] = GColorFromRGB(128, 64, 0);
+  colorSelectColor[7] = GColorFromRGB(0, 0, 255);     // blue
+  colorSelectColor[8] = GColorFromRGB(128, 128, 255);
+  colorSelectColor[9] = GColorFromRGB(0, 0, 128);
+  colorSelectColor[10] = GColorFromRGB(0, 255, 0);     // green
+  colorSelectColor[11] = GColorFromRGB(128, 255, 128);
+  colorSelectColor[12] = GColorFromRGB(0, 128, 0);
+  colorSelectColor[13] = GColorFromRGB(128, 0, 128);   // purple
+  colorSelectColor[14] = GColorFromRGB(255, 0, 255);
+  colorSelectColor[15] = GColorFromRGB(96, 0, 96);
   #endif
 
   // Note: window_set_click_config_provider() for option window will be set based on option selected.

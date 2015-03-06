@@ -9,6 +9,16 @@
     "resources": {
         "media": [
             {
+                "file": "images/start_stop_icon.png",
+                "name": "START_STOP",
+                "type": "png"
+            },
+            {
+                "file": "images/light_icon.png",
+                "name": "LIGHT_ICON",
+                "type": "png"
+            },
+            {
                 "file": "images/menu_image.png",
                 "menuIcon": true,
                 "name": "MENU_IMAGE",
